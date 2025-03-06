@@ -313,6 +313,8 @@ pub mod schema {
 
     use crate::errors::Error;
     use crate::types::protocol::{ Message, Response, Request };
+    use crate::types::resources::ReadResourceParams;
+    use crate::types::resources::ReadResourceResult;
     use crate::types::{
         initialize::{ InitializeRequestParams, InitializeResult },
         prompts::{
@@ -332,8 +334,6 @@ pub mod schema {
             CreateResourceResult,
             DeleteResourceParams,
             DeleteResourceResult,
-            GetResourceParams,
-            GetResourceResult,
             ListResourcesParams,
             ListResourcesResult,
             UpdateResourceParams,
@@ -445,7 +445,7 @@ pub mod schema {
 
             // Resource methods
             registry.insert("resources/list".to_string(), generate_schema::<ListResourcesParams>());
-            registry.insert("resources/get".to_string(), generate_schema::<GetResourceParams>());
+            registry.insert("resources/read".to_string(), generate_schema::<ReadResourceParams>());
             registry.insert(
                 "resources/create".to_string(),
                 generate_schema::<CreateResourceParams>()
@@ -485,7 +485,7 @@ pub mod schema {
 
             // Resource methods
             registry.insert("resources/list".to_string(), generate_schema::<ListResourcesResult>());
-            registry.insert("resources/get".to_string(), generate_schema::<GetResourceResult>());
+            registry.insert("resources/read".to_string(), generate_schema::<ReadResourceResult>());
             registry.insert(
                 "resources/create".to_string(),
                 generate_schema::<CreateResourceResult>()

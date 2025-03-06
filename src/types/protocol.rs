@@ -27,8 +27,8 @@ use crate::types::resources::{
     CreateResourceResult,
     DeleteResourceParams,
     DeleteResourceResult,
-    GetResourceParams,
-    GetResourceResult,
+    ReadResourceParams,
+    ReadResourceResult,
     ListResourcesParams,
     ListResourcesResult,
     UpdateResourceParams,
@@ -162,7 +162,7 @@ pub enum RequestMessage {
     },
     #[serde(rename = "resources/read")] ReadResource {
         #[serde(flatten)]
-        params: GetResourceParams,
+        params: ReadResourceParams,
     },
     #[serde(rename = "resources/create")] CreateResource {
         #[serde(flatten)]
@@ -237,7 +237,7 @@ pub enum ResponseMessage {
     },
     #[serde(rename = "resources/read")] ReadResource {
         #[serde(flatten)]
-        result: GetResourceResult,
+        result: ReadResourceResult,
         #[serde(flatten)]
         meta: Option<serde_json::Value>,
     },

@@ -43,10 +43,10 @@ use crate::types::resources::{
     DeleteResourceParams,
     DeleteResourceResult,
     FileResource,
-    GetResourceParams,
-    GetResourceResult,
     ListResourcesParams,
     ListResourcesResult,
+    ReadResourceParams,
+    ReadResourceResult,
     UpdateResourceParams,
     UpdateResourceResult,
 };
@@ -335,10 +335,10 @@ impl<T: Transport + 'static> Client<T> {
     }
 
     /// Get a resource by URI
-    pub async fn get_resource(
+    pub async fn read_resource(
         &self,
-        params: GetResourceParams
-    ) -> Result<GetResourceResult, Error> {
+        params: ReadResourceParams
+    ) -> Result<ReadResourceResult, Error> {
         self.send_request("resources/get", params).await
     }
 
@@ -665,11 +665,11 @@ impl<T: Transport + 'static> ClientSession<T> {
     }
 
     /// Get a specific resource
-    pub async fn get_resource(
+    pub async fn read_resource(
         &self,
-        params: GetResourceParams
-    ) -> Result<GetResourceResult, Error> {
-        self.client.get_resource(params).await
+        params: ReadResourceParams
+    ) -> Result<ReadResourceResult, Error> {
+        self.client.read_resource(params).await
     }
 
     /// Create a new resource

@@ -1,202 +1,259 @@
-// /// Resource lifecycle state
-// #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-// pub enum ResourceLifecycleState {
-//     /// Resource is created but not fully initialized
-//     Created,
+// Re-export resource registry module and its contents
+pub mod resource_registry;
 
-//     /// Resource is initialized and ready for use
-//     Ready,
+// Re-export public types from resource_registry
+pub use resource_registry::{ ResourceProvider, TemplateResourceProvider, ResourceRegistry };
 
-//     /// Resource has been modified
-//     Modified,
+use crate::errors::Error;
+use crate::types::resources::{ Resource, ResourceTemplate, ResourceContent };
 
-//     /// Resource is being closed
-//     Closing,
+use async_trait::async_trait;
+use std::collections::{ HashMap, HashSet };
+use std::sync::Arc;
+use tokio::sync::{ mpsc, Mutex, RwLock };
 
-//     /// Resource is closed
-//     Closed,
-// }
+/// Resource lifecycle states
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResourceLifecycleState {
+    /// Resource is created but not fully initialized
+    Created,
 
-// /// Trait for resource implementations
-// #[async_trait]
-// pub trait ResourceImpl: Send + Sync + 'static {
-//     /// Get the resource content
-//     async fn read(&self) -> Result<Vec<u8>, Error>;
+    /// Resource is initialized and ready for use
+    Ready,
 
-//     /// Write content to the resource
-//     async fn write(&mut self, content: &[u8]) -> Result<(), Error>;
+    /// Resource has been modified
+    Modified,
 
-//     /// Close the resource and release any associated resources
-//     async fn close(&mut self) -> Result<(), Error>;
-// }
+    /// Resource is being closed
+    Closing,
 
-// /// Base resource structure
-// #[derive(Clone)]
-// pub struct Resource {
-//     /// Resource URI
-//     pub uri: String,
+    /// Resource is closed
+    Closed,
+}
 
-//     /// Resource name
-//     pub name: String,
+/// Trait for resource implementations
+#[async_trait]
+pub trait ResourceImpl: Send + Sync + 'static {
+    /// Get the resource content
+    async fn read(&self) -> Result<Vec<u8>, Error>;
 
-//     /// Resource description
-//     #[serde(skip_serializing_if = "Option::is_none")]
-//     pub description: Option<String>,
+    /// Write content to the resource
+    async fn write(&mut self, content: &[u8]) -> Result<(), Error>;
 
-//     /// Resource mime type
-//     #[serde(skip_serializing_if = "Option::is_none")]
-//     pub mime_type: Option<String>,
+    /// Close the resource and release any associated resources
+    async fn close(&mut self) -> Result<(), Error>;
+}
 
-//     /// Resource implementation
-//     #[serde(skip)]
-//     pub implementation: Arc<Mutex<Option<Box<dyn ResourceImpl>>>>,
+/// Resource change notification
+#[derive(Clone)]
+pub struct ResourceChangeNotification {
+    /// URI of the resource that changed
+    pub uri: String,
 
-//     /// Resource lifecycle state
-//     #[serde(skip)]
-//     pub lifecycle_state: Arc<Mutex<ResourceLifecycleState>>,
+    /// Timestamp of the change
+    pub timestamp: std::time::SystemTime,
+}
 
-//     /// Subscribers to resource changes
-//     #[serde(skip)]
-//     pub subscribers: Arc<Mutex<Vec<mpsc::Sender<ResourceChangeNotification>>>>,
-// }
+/// Resource instance
+pub struct ResourceInstance {
+    /// Resource URI
+    pub uri: String,
 
-// impl Resource {
-//     /// Create a new resource
-//     pub fn new(uri: String, name: String) -> Self {
-//         Self {
-//             uri,
-//             name,
-//             description: None,
-//             mime_type: None,
-//             implementation: Arc::new(Mutex::new(None)),
-//             lifecycle_state: Arc::new(Mutex::new(ResourceLifecycleState::Created)),
-//             subscribers: Arc::new(Mutex::new(Vec::new())),
-//         }
-//     }
+    /// Resource name
+    pub name: String,
 
-//     /// Set the resource implementation
-//     pub async fn set_implementation(
-//         &self,
-//         implementation: Box<dyn ResourceImpl>
-//     ) -> Result<(), Error> {
-//         let mut impl_guard = self.implementation.lock().await;
-//         *impl_guard = Some(implementation);
+    /// Resource description
+    pub description: Option<String>,
 
-//         // Update lifecycle state
-//         let mut state_guard = self.lifecycle_state.lock().await;
-//         *state_guard = ResourceLifecycleState::Ready;
+    /// Resource mime type
+    pub mime_type: Option<String>,
 
-//         Ok(())
-//     }
+    /// Resource implementation
+    pub implementation: Arc<Mutex<Option<Box<dyn ResourceImpl>>>>,
 
-//     /// Read the resource content
-//     pub async fn read(&self) -> Result<Vec<u8>, Error> {
-//         // Check lifecycle state
-//         {
-//             let state_guard = self.lifecycle_state.lock().await;
-//             if *state_guard == ResourceLifecycleState::Closed {
-//                 return Err(Error::Resource("Resource is closed".to_string()));
-//             }
-//         }
+    /// Resource lifecycle state
+    pub lifecycle_state: Arc<Mutex<ResourceLifecycleState>>,
 
-//         // Get implementation
-//         let impl_guard = self.implementation.lock().await;
-//         match &*impl_guard {
-//             Some(implementation) => implementation.read().await,
-//             None => Err(Error::Resource("Resource has no implementation".to_string())),
-//         }
-//     }
+    /// Subscribers to resource changes
+    pub subscribers: Arc<Mutex<Vec<mpsc::Sender<ResourceChangeNotification>>>>,
+}
 
-//     /// Write to the resource
-//     pub async fn write(&self, content: &[u8]) -> Result<(), Error> {
-//         // Check lifecycle state
-//         {
-//             let state_guard = self.lifecycle_state.lock().await;
-//             if *state_guard == ResourceLifecycleState::Closed {
-//                 return Err(Error::Resource("Resource is closed".to_string()));
-//             }
-//         }
+// Internal module for memory resource implementation
+mod memory_resource {
+    use super::*;
 
-//         // Get implementation
-//         let mut impl_guard = self.implementation.lock().await;
-//         match &mut *impl_guard {
-//             Some(implementation) => {
-//                 let result = implementation.write(content).await;
+    pub struct MemoryResourceImpl {
+        content: Vec<u8>,
+    }
 
-//                 // Update lifecycle state
-//                 if result.is_ok() {
-//                     let mut state_guard = self.lifecycle_state.lock().await;
-//                     *state_guard = ResourceLifecycleState::Modified;
+    impl MemoryResourceImpl {
+        pub fn new(content: Vec<u8>) -> Self {
+            Self { content }
+        }
 
-//                     // Notify subscribers
-//                     self.notify_change().await;
-//                 }
+        pub fn from_string(content: String) -> Self {
+            Self { content: content.into_bytes() }
+        }
+    }
 
-//                 result
-//             }
-//             None => Err(Error::Resource("Resource has no implementation".to_string())),
-//         }
-//     }
+    #[async_trait]
+    impl ResourceImpl for MemoryResourceImpl {
+        async fn read(&self) -> Result<Vec<u8>, Error> {
+            Ok(self.content.clone())
+        }
 
-//     /// Close the resource
-//     pub async fn close(&self) -> Result<(), Error> {
-//         // Check lifecycle state
-//         {
-//             let state_guard = self.lifecycle_state.lock().await;
-//             if *state_guard == ResourceLifecycleState::Closed {
-//                 return Ok(());
-//             }
-//         }
+        async fn write(&mut self, content: &[u8]) -> Result<(), Error> {
+            self.content = content.to_vec();
+            Ok(())
+        }
 
-//         // Update lifecycle state
-//         {
-//             let mut state_guard = self.lifecycle_state.lock().await;
-//             *state_guard = ResourceLifecycleState::Closing;
-//         }
+        async fn close(&mut self) -> Result<(), Error> {
+            // Nothing to do for memory resources
+            Ok(())
+        }
+    }
+}
 
-//         // Get implementation
-//         let mut impl_guard = self.implementation.lock().await;
-//         let result = match &mut *impl_guard {
-//             Some(implementation) => implementation.close().await,
-//             None => Ok(()),
-//         };
+// Internal module for file resource implementation
+mod file_resource {
+    use super::*;
+    use tokio::fs;
 
-//         // Update lifecycle state
-//         {
-//             let mut state_guard = self.lifecycle_state.lock().await;
-//             *state_guard = ResourceLifecycleState::Closed;
-//         }
+    pub struct FileResourceImpl {
+        path: std::path::PathBuf,
+    }
 
-//         // Clear subscribers
-//         {
-//             let mut subscribers_guard = self.subscribers.lock().await;
-//             subscribers_guard.clear();
-//         }
+    impl FileResourceImpl {
+        pub fn new(path: std::path::PathBuf) -> Self {
+            Self { path }
+        }
+    }
 
-//         result
-//     }
+    #[async_trait]
+    impl ResourceImpl for FileResourceImpl {
+        async fn read(&self) -> Result<Vec<u8>, Error> {
+            fs::read(&self.path).await.map_err(|e|
+                Error::Resource(format!("Failed to read file: {}", e))
+            )
+        }
 
-//     /// Subscribe to resource changes
-//     pub async fn subscribe(&self) -> mpsc::Receiver<ResourceChangeNotification> {
-//         let (tx, rx) = mpsc::channel(10);
+        async fn write(&mut self, content: &[u8]) -> Result<(), Error> {
+            fs::write(&self.path, content).await.map_err(|e|
+                Error::Resource(format!("Failed to write file: {}", e))
+            )
+        }
 
-//         // Add subscriber
-//         {
-//             let mut subscribers_guard = self.subscribers.lock().await;
-//             subscribers_guard.push(tx);
-//         }
+        async fn close(&mut self) -> Result<(), Error> {
+            // Nothing special needed for file resources
+            Ok(())
+        }
+    }
+}
 
-//         rx
-//     }
+// Re-export implementations
+pub use self::memory_resource::MemoryResourceImpl;
+pub use self::file_resource::FileResourceImpl;
 
-//     /// Notify subscribers of a change
-//     async fn notify_change(&self) {
-//         let notification = ResourceChangeNotification {
-//             uri: self.uri.clone(),
-//             timestamp: std::time::SystemTime::now().into(),
-//         };
+// Implement ResourceInstance methods
+impl ResourceInstance {
+    pub fn new(uri: String, name: String) -> Self {
+        Self {
+            uri,
+            name,
+            description: None,
+            mime_type: None,
+            implementation: Arc::new(Mutex::new(None)),
+            lifecycle_state: Arc::new(Mutex::new(ResourceLifecycleState::Created)),
+            subscribers: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
 
-//         let mut subscribers_guard = self.subscribers.lock().await;
-//         subscribers_guard.retain(|tx| { tx.try_send(notification.clone()).is_ok() });
-//     }
-// }
+    pub async fn set_implementation(
+        &self,
+        implementation: Box<dyn ResourceImpl>
+    ) -> Result<(), Error> {
+        let mut impl_guard = self.implementation.lock().await;
+        *impl_guard = Some(implementation);
+
+        let mut state_guard = self.lifecycle_state.lock().await;
+        *state_guard = ResourceLifecycleState::Ready;
+
+        Ok(())
+    }
+
+    pub async fn read(&self) -> Result<Vec<u8>, Error> {
+        let impl_guard = self.implementation.lock().await;
+        if let Some(impl_ref) = &*impl_guard {
+            impl_ref.read().await
+        } else {
+            Err(Error::Resource("Resource implementation not set".to_string()))
+        }
+    }
+
+    pub async fn write(&self, content: &[u8]) -> Result<(), Error> {
+        let mut impl_guard = self.implementation.lock().await;
+        if let Some(impl_ref) = &mut *impl_guard {
+            let result = impl_ref.write(content).await;
+            if result.is_ok() {
+                let mut state_guard = self.lifecycle_state.lock().await;
+                *state_guard = ResourceLifecycleState::Modified;
+                self.notify_change().await;
+            }
+            result
+        } else {
+            Err(Error::Resource("Resource implementation not set".to_string()))
+        }
+    }
+
+    pub async fn close(&self) -> Result<(), Error> {
+        {
+            let mut state_guard = self.lifecycle_state.lock().await;
+            *state_guard = ResourceLifecycleState::Closing;
+        }
+
+        let mut impl_guard = self.implementation.lock().await;
+        if let Some(impl_ref) = &mut *impl_guard {
+            let result = impl_ref.close().await;
+            if result.is_ok() {
+                let mut state_guard = self.lifecycle_state.lock().await;
+                *state_guard = ResourceLifecycleState::Closed;
+            }
+            result
+        } else {
+            // If there's no implementation, just mark it as closed
+            let mut state_guard = self.lifecycle_state.lock().await;
+            *state_guard = ResourceLifecycleState::Closed;
+            Ok(())
+        }
+    }
+
+    pub async fn subscribe(&self) -> mpsc::Receiver<ResourceChangeNotification> {
+        let (tx, rx) = mpsc::channel(10);
+
+        let mut subscribers = self.subscribers.lock().await;
+        subscribers.push(tx);
+
+        rx
+    }
+
+    async fn notify_change(&self) {
+        let notification = ResourceChangeNotification {
+            uri: self.uri.clone(),
+            timestamp: std::time::SystemTime::now(),
+        };
+
+        let subscribers = self.subscribers.lock().await;
+        for subscriber in subscribers.iter() {
+            let _ = subscriber.send(notification.clone()).await;
+        }
+    }
+
+    pub fn to_resource(&self) -> Resource {
+        Resource {
+            uri: self.uri.clone(),
+            name: self.name.clone(),
+            description: self.description.clone(),
+            mime_type: self.mime_type.clone(),
+        }
+    }
+}
