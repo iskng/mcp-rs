@@ -10,10 +10,12 @@
 pub mod client;
 pub mod errors;
 pub mod server;
+pub mod protocol;
+pub mod types;
 // pub mod server_session;
 
 pub mod transport;
-pub mod types;
+
 pub mod utils;
 // Re-export commonly used items
 pub use errors::Error;

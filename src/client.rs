@@ -16,27 +16,14 @@ use crate::errors::Error;
 use crate::types::protocol::{
     Message as McpMessage,
     Notification,
+    Request,
     Response,
     ResponseOutcome,
-    Request,
+    Role,
 };
 use crate::transport::Transport;
 use crate::types::initialize::{ InitializeRequestParams, InitializeResult };
-use crate::types::prompts::{
-    ContentPart,
-    CreatePromptParams,
-    CreatePromptResult,
-    DeletePromptParams,
-    DeletePromptResult,
-    ListPromptsParams,
-    ListPromptsResult,
-    Message,
-    RenderPromptParams,
-    RenderPromptResult,
-    Role,
-    UpdatePromptParams,
-    UpdatePromptResult,
-};
+use crate::types::prompts::{ ContentPart, ListPromptsParams, ListPromptsResult, PromptMessage };
 use crate::types::resources::{
     CreateResourceParams,
     CreateResourceResult,
@@ -374,38 +361,6 @@ impl<T: Transport + 'static> Client<T> {
         self.send_request("prompts/list", params).await
     }
 
-    /// Create a new prompt
-    pub async fn create_prompt(
-        &self,
-        params: CreatePromptParams
-    ) -> Result<CreatePromptResult, Error> {
-        self.send_request("prompts/create", params).await
-    }
-
-    /// Update an existing prompt
-    pub async fn update_prompt(
-        &self,
-        params: UpdatePromptParams
-    ) -> Result<UpdatePromptResult, Error> {
-        self.send_request("prompts/update", params).await
-    }
-
-    /// Delete a prompt
-    pub async fn delete_prompt(
-        &self,
-        params: DeletePromptParams
-    ) -> Result<DeletePromptResult, Error> {
-        self.send_request("prompts/delete", params).await
-    }
-
-    /// Render a prompt with the given arguments
-    pub async fn render_prompt(
-        &self,
-        params: RenderPromptParams
-    ) -> Result<RenderPromptResult, Error> {
-        self.send_request("prompts/render", params).await
-    }
-
     /// List available tools
     pub async fn list_tools(&self, params: ListToolsParams) -> Result<ListToolsResult, Error> {
         self.send_request("tools/list", params).await
@@ -635,25 +590,6 @@ impl<T: Transport + 'static> ClientSession<T> {
         transport.send(&McpMessage::Notification(notification)).await
     }
 
-    //==== Message Creation Methods ====
-
-    /// Create a message for sampling
-    pub fn create_message(&self, role: Role, content: Vec<ContentPart>) -> Message {
-        Message { role, content }
-    }
-
-    /// Create a text content part
-    pub fn create_text_content(&self, text: &str) -> ContentPart {
-        ContentPart::Text(text.to_string())
-    }
-
-    /// Create an image content part from a resource URI
-    pub fn create_image_content(&self, uri: &str) -> ContentPart {
-        ContentPart::Image {
-            uri: uri.to_string(),
-        }
-    }
-
     //==== Standard MCP Operations ====
 
     /// List available resources
@@ -702,38 +638,6 @@ impl<T: Transport + 'static> ClientSession<T> {
         params: ListPromptsParams
     ) -> Result<ListPromptsResult, Error> {
         self.client.list_prompts(params).await
-    }
-
-    /// Create a new prompt
-    pub async fn create_prompt(
-        &self,
-        params: CreatePromptParams
-    ) -> Result<CreatePromptResult, Error> {
-        self.client.create_prompt(params).await
-    }
-
-    /// Update an existing prompt
-    pub async fn update_prompt(
-        &self,
-        params: UpdatePromptParams
-    ) -> Result<UpdatePromptResult, Error> {
-        self.client.update_prompt(params).await
-    }
-
-    /// Delete a prompt
-    pub async fn delete_prompt(
-        &self,
-        params: DeletePromptParams
-    ) -> Result<DeletePromptResult, Error> {
-        self.client.delete_prompt(params).await
-    }
-
-    /// Render a prompt with the given arguments
-    pub async fn render_prompt(
-        &self,
-        params: RenderPromptParams
-    ) -> Result<RenderPromptResult, Error> {
-        self.client.render_prompt(params).await
     }
 
     /// List available tools

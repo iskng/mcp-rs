@@ -18,7 +18,7 @@ pub use initialize::{
     InitializeResult,
     ServerCapabilities,
 };
-pub use prompts::{ ContentPart, Message as PromptMessage, Prompt, PromptArgument, Role };
+pub use prompts::{ ContentPart, PromptMessage, Prompt, PromptArgument };
 pub use protocol::{
     Message as ProtocolMessage,
     Request,

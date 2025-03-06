@@ -5,187 +5,278 @@
 //! user inputs or AI queries.
 
 use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use serde::{ Deserialize, Serialize };
 use std::collections::HashMap;
 
-/// A type of content that can be sent in a message
+use super::protocol::Role;
+
+/// Text provided to or from an LLM.
 #[derive(Serialize, Deserialize, Debug, Clone, JsonSchema)]
-#[serde(tag = "type", content = "content")]
+pub struct TextContent {
+    /// The type of content
+    #[serde(rename = "type")]
+    pub type_: String,
+
+    /// The text content of the message.
+    pub text: String,
+
+    /// Optional annotations for the content
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub annotations: Option<ContentAnnotations>,
+}
+
+/// Content annotations to provide metadata about content items
+#[derive(Serialize, Deserialize, Debug, Clone, JsonSchema)]
+pub struct ContentAnnotations {
+    /// Describes who the intended customer of this object or data is.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub audience: Option<Vec<Role>>,
+
+    /// Describes how important this data is for operating the server.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub priority: Option<f32>,
+}
+
+/// An image provided to or from an LLM.
+#[derive(Serialize, Deserialize, Debug, Clone, JsonSchema)]
+pub struct ImageContent {
+    /// The type of content
+    #[serde(rename = "type")]
+    pub type_: String,
+
+    /// The base64-encoded image data.
+    pub data: String,
+
+    /// The MIME type of the image. Different providers may support different image types.
+    pub mime_type: String,
+
+    /// Optional annotations for the content
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub annotations: Option<ContentAnnotations>,
+}
+
+/// The contents of a resource, embedded into a prompt.
+#[derive(Serialize, Deserialize, Debug, Clone, JsonSchema)]
+pub struct EmbeddedResource {
+    /// The type of content
+    #[serde(rename = "type")]
+    pub type_: String,
+
+    /// The resource content
+    pub resource: ResourceContent,
+
+    /// Optional annotations for the content
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub annotations: Option<ContentAnnotations>,
+}
+
+/// The content of a resource
+#[derive(Serialize, Deserialize, Debug, Clone, JsonSchema)]
+#[serde(untagged)]
+pub enum ResourceContent {
+    Text(TextResourceContents),
+    Blob(BlobResourceContents),
+}
+
+/// Text resource contents
+#[derive(Serialize, Deserialize, Debug, Clone, JsonSchema)]
+pub struct TextResourceContents {
+    /// The URI of this resource.
+    pub uri: String,
+
+    /// The text of the item.
+    pub text: String,
+
+    /// The MIME type of this resource, if known.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mime_type: Option<String>,
+}
+
+/// Binary resource contents
+#[derive(Serialize, Deserialize, Debug, Clone, JsonSchema)]
+pub struct BlobResourceContents {
+    /// The URI of this resource.
+    pub uri: String,
+
+    /// A base64-encoded string representing the binary data of the item.
+    pub blob: String,
+
+    /// The MIME type of this resource, if known.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mime_type: Option<String>,
+}
+
+/// Content that can be included in a prompt message
+#[derive(Serialize, Deserialize, Debug, Clone, JsonSchema)]
+#[serde(untagged)]
 pub enum ContentPart {
-    /// Text content
-    #[serde(rename = "text")]
-    Text(String),
-    /// Image content (referenced by resource URI)
-    #[serde(rename = "image")]
-    Image { uri: String },
-    /// Tool call content
-    #[serde(rename = "tool_call")]
-    ToolCall {
-        /// Name of the tool to call
-        tool_name: String,
-        /// Parameters for the tool call
-        parameters: HashMap<String, serde_json::Value>,
-    },
-    /// Tool result content
-    #[serde(rename = "tool_result")]
-    ToolResult {
-        /// Name of the tool that was called
-        tool_name: String,
-        /// Result of the tool call
-        result: serde_json::Value,
-    },
+    Text(TextContent),
+    Image(ImageContent),
+    Resource(EmbeddedResource),
 }
 
-/// Role of a message sender
+/// Describes a message returned as part of a prompt.
 #[derive(Serialize, Deserialize, Debug, Clone, JsonSchema)]
-#[serde(rename_all = "lowercase")]
-pub enum Role {
-    /// System message
-    System,
-    /// Human user message
-    User,
-    /// AI assistant message
-    Assistant,
-    /// Tool message (for tool calls or results)
-    Tool,
-}
-
-/// A message in a prompt template
-#[derive(Serialize, Deserialize, Debug, Clone, JsonSchema)]
-pub struct Message {
+pub struct PromptMessage {
     /// Role of the message sender
     pub role: Role,
+
     /// Content of the message
-    pub content: Vec<ContentPart>,
+    pub content: ContentPart,
 }
 
-/// Represents a template argument
+/// Describes an argument that a prompt can accept.
 #[derive(Serialize, Deserialize, Debug, Clone, JsonSchema)]
 pub struct PromptArgument {
-    /// Name of the argument
+    /// The name of the argument.
     pub name: String,
-    /// Type of the argument (e.g., "string", "number")
-    #[serde(rename = "type")]
-    pub type_name: String,
-    /// Description of the argument
+
+    /// A human-readable description of the argument.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
-    /// Whether the argument is required
+
+    /// Whether this argument must be provided.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub required: Option<bool>,
-    /// Default value for the argument
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub default: Option<serde_json::Value>,
-    /// Schema for the argument, if complex
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub schema: Option<serde_json::Value>,
 }
 
-/// Represents a prompt template
+/// A prompt or prompt template that the server offers.
 #[derive(Serialize, Deserialize, Debug, Clone, JsonSchema)]
 pub struct Prompt {
-    /// Unique name for the prompt
+    /// The name of the prompt or prompt template.
     pub name: String,
-    /// Description of the prompt
-    pub description: String,
-    /// Template messages
-    pub messages: Vec<Message>,
-    /// Arguments for templating
+
+    /// An optional description of what this prompt provides
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+
+    /// A list of arguments to use for templating the prompt.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub arguments: Option<Vec<PromptArgument>>,
 }
 
-/// Parameters for listing prompts
+/// Additional metadata attached to requests, responses, or notifications.
 #[derive(Serialize, Deserialize, Debug, Clone, JsonSchema)]
-pub struct ListPromptsParams {
-    /// Optional pagination token
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub page_token: Option<String>,
-    /// Optional limit on the number of prompts to return
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub page_size: Option<i32>,
+pub struct MetaData {
+    /// This field may contain any JSON-serializable value.
+    #[serde(flatten)]
+    pub additional_properties: HashMap<String, serde_json::Value>,
 }
 
-/// Result of listing prompts
+/// Sent from the client to request a list of prompts and prompt templates the server has.
+#[derive(Serialize, Deserialize, Debug, Clone, JsonSchema)]
+pub struct ListPromptsParams {
+    /// An opaque token representing the current pagination position.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
+
+    /// Additional metadata for the request
+    #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
+    pub meta: Option<MetaData>,
+}
+
+/// The server's response to a prompts/list request from the client.
 #[derive(Serialize, Deserialize, Debug, Clone, JsonSchema)]
 pub struct ListPromptsResult {
     /// List of prompts
     pub prompts: Vec<Prompt>,
-    /// Token for the next page (if there are more prompts)
+
+    /// An opaque token representing the pagination position after the last returned result.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub next_page_token: Option<String>,
+    pub next_cursor: Option<String>,
+
+    /// Additional metadata for the response
+    #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
+    pub meta: Option<MetaData>,
 }
 
-/// Parameters for creating a prompt
+/// Used by the client to get a prompt provided by the server.
 #[derive(Serialize, Deserialize, Debug, Clone, JsonSchema)]
-pub struct CreatePromptParams {
-    /// Unique name for the prompt
+pub struct GetPromptParams {
+    /// The name of the prompt or prompt template.
     pub name: String,
-    /// Description of the prompt
-    pub description: String,
-    /// Template messages
-    pub messages: Vec<Message>,
-    /// Arguments for templating
+
+    /// Arguments to use for templating the prompt.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub arguments: Option<Vec<PromptArgument>>,
+    pub arguments: Option<HashMap<String, String>>,
+
+    /// Additional metadata for the request
+    #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
+    pub meta: Option<MetaData>,
 }
 
-/// Result of creating a prompt
+/// The server's response to a prompts/get request from the client.
 #[derive(Serialize, Deserialize, Debug, Clone, JsonSchema)]
-pub struct CreatePromptResult {
-    /// The created prompt
-    pub prompt: Prompt,
-}
+pub struct GetPromptResult {
+    /// Rendered messages
+    pub messages: Vec<PromptMessage>,
 
-/// Parameters for updating a prompt
-#[derive(Serialize, Deserialize, Debug, Clone, JsonSchema)]
-pub struct UpdatePromptParams {
-    /// Name of the prompt to update
-    pub name: String,
-    /// New description for the prompt
+    /// An optional description for the prompt.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
-    /// New template messages
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub messages: Option<Vec<Message>>,
-    /// New arguments for templating
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub arguments: Option<Vec<PromptArgument>>,
+
+    /// Additional metadata for the response
+    #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
+    pub meta: Option<MetaData>,
 }
 
-/// Result of updating a prompt
+/// Identifies a prompt.
 #[derive(Serialize, Deserialize, Debug, Clone, JsonSchema)]
-pub struct UpdatePromptResult {
-    /// The updated prompt
-    pub prompt: Prompt,
-}
+pub struct PromptReference {
+    /// Type of reference
+    #[serde(rename = "type")]
+    pub type_: String,
 
-/// Parameters for deleting a prompt
-#[derive(Serialize, Deserialize, Debug, Clone, JsonSchema)]
-pub struct DeletePromptParams {
-    /// Name of the prompt to delete
+    /// The name of the prompt or prompt template
     pub name: String,
 }
 
-/// Result of deleting a prompt
+/// Request to complete an argument with suggestions
 #[derive(Serialize, Deserialize, Debug, Clone, JsonSchema)]
-pub struct DeletePromptResult {
-    /// Indicates whether the prompt was successfully deleted
-    pub success: bool,
+pub struct CompleteRequest {
+    /// The reference to the prompt or resource
+    pub ref_: serde_json::Value, // Can be PromptReference or ResourceReference
+
+    /// The argument's information
+    pub argument: ArgumentInfo,
+
+    /// Additional metadata for the request
+    #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
+    pub meta: Option<MetaData>,
 }
 
-/// Parameters for rendering a prompt
+/// Information about an argument for completion
 #[derive(Serialize, Deserialize, Debug, Clone, JsonSchema)]
-pub struct RenderPromptParams {
-    /// Name of the prompt to render
+pub struct ArgumentInfo {
+    /// The name of the argument
     pub name: String,
-    /// Arguments for template substitution
-    pub arguments: HashMap<String, serde_json::Value>,
+
+    /// The value of the argument to use for completion matching
+    pub value: String,
 }
 
-/// Result of rendering a prompt
+/// Result of a completion request
 #[derive(Serialize, Deserialize, Debug, Clone, JsonSchema)]
-pub struct RenderPromptResult {
-    /// Rendered messages
-    pub messages: Vec<Message>,
+pub struct CompleteResult {
+    /// Completion options
+    pub completion: CompletionOptions,
+
+    /// Additional metadata for the response
+    #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
+    pub meta: Option<MetaData>,
+}
+
+/// Options for completion
+#[derive(Serialize, Deserialize, Debug, Clone, JsonSchema)]
+pub struct CompletionOptions {
+    /// An array of completion values
+    pub values: Vec<String>,
+
+    /// The total number of completion options available
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total: Option<i32>,
+
+    /// Indicates whether there are additional completion options
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub has_more: Option<bool>,
 }

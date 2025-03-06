@@ -8,20 +8,7 @@ use serde::{ Serialize, Deserialize };
 use schemars::JsonSchema;
 
 use crate::types::initialize::{ InitializeRequestParams, InitializeResult };
-use crate::types::prompts::{
-    CreatePromptParams,
-    CreatePromptResult,
-    DeletePromptParams,
-    DeletePromptResult,
-    ListPromptsParams,
-    ListPromptsResult,
-    Message as PromptMessage,
-    RenderPromptParams,
-    RenderPromptResult,
-    UpdatePromptParams,
-    UpdatePromptResult,
-    Role,
-};
+use crate::types::prompts::{ ListPromptsParams, ListPromptsResult };
 use crate::types::resources::{
     CreateResourceParams,
     CreateResourceResult,
@@ -35,6 +22,16 @@ use crate::types::resources::{
     UpdateResourceResult,
 };
 use crate::types::tools::{ CallToolParams, CallToolResult, ListToolsParams, ListToolsResult };
+
+/// Role in the conversation
+#[derive(Serialize, Deserialize, Debug, Clone, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum Role {
+    /// User role
+    User,
+    /// Assistant role
+    Assistant,
+}
 
 /// The top-level Message enum for handling JSON-RPC 2.0 messages
 #[derive(Debug, Clone)]
@@ -194,22 +191,6 @@ pub enum RequestMessage {
         #[serde(flatten)]
         params: ListPromptsParams,
     },
-    #[serde(rename = "prompts/create")] CreatePrompt {
-        #[serde(flatten)]
-        params: CreatePromptParams,
-    },
-    #[serde(rename = "prompts/update")] UpdatePrompt {
-        #[serde(flatten)]
-        params: UpdatePromptParams,
-    },
-    #[serde(rename = "prompts/delete")] DeletePrompt {
-        #[serde(flatten)]
-        params: DeletePromptParams,
-    },
-    #[serde(rename = "prompts/render")] RenderPrompt {
-        #[serde(flatten)]
-        params: RenderPromptParams,
-    },
     #[serde(rename = "prompts/get")] GetPrompt {
         name: String,
     },
@@ -285,36 +266,7 @@ pub enum ResponseMessage {
         #[serde(flatten)]
         meta: Option<serde_json::Value>,
     },
-    #[serde(rename = "prompts/create")] CreatePrompt {
-        #[serde(flatten)]
-        result: CreatePromptResult,
-        #[serde(flatten)]
-        meta: Option<serde_json::Value>,
-    },
-    #[serde(rename = "prompts/update")] UpdatePrompt {
-        #[serde(flatten)]
-        result: UpdatePromptResult,
-        #[serde(flatten)]
-        meta: Option<serde_json::Value>,
-    },
-    #[serde(rename = "prompts/delete")] DeletePrompt {
-        #[serde(flatten)]
-        result: DeletePromptResult,
-        #[serde(flatten)]
-        meta: Option<serde_json::Value>,
-    },
-    #[serde(rename = "prompts/render")] RenderPrompt {
-        #[serde(flatten)]
-        result: RenderPromptResult,
-        #[serde(flatten)]
-        meta: Option<serde_json::Value>,
-    },
-    #[serde(rename = "prompts/get")] GetPrompt {
-        messages: Vec<PromptMessage>,
-        description: Option<String>,
-        #[serde(flatten)]
-        meta: Option<serde_json::Value>,
-    },
+  
 }
 
 /// Enum representing the types of requests in the MCP protocol

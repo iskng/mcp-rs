@@ -149,6 +149,8 @@ class McpClient:
             return None
         
         try:
+            # Use the operation as provided (from the schema)
+            # No need to modify the case since we're now using values directly from the schema
             log.info(f"Calling calculator tool: {operation}({a}, {b})...")
             result = await self.session.call_tool(
                 "calculator", 
@@ -355,13 +357,41 @@ class McpClient:
                     
                     log.info("Input schema: " + json.dumps(input_schema, indent=2))
                     
-                    # Test the calculator with different operations
-                    operations = [
-                        {"operation": "add", "a": 5, "b": 3},
-                        {"operation": "subtract", "a": 10, "b": 4},
-                        {"operation": "multiply", "a": 6, "b": 7},
-                        {"operation": "divide", "a": 15, "b": 3}
-                    ]
+                    # Extract valid operations from the schema
+                    valid_operations = []
+                    try:
+                        if isinstance(input_schema, dict) and "properties" in input_schema:
+                            if "operation" in input_schema["properties"]:
+                                operation_schema = input_schema["properties"]["operation"]
+                                if "enum" in operation_schema:
+                                    valid_operations = operation_schema["enum"]
+                    except Exception as e:
+                        log.error(f"Error extracting operations from schema: {e}")
+                    
+                    if not valid_operations:
+                        # Fallback to defaults if we couldn't extract operations
+                        valid_operations = ["add", "subtract", "multiply", "divide"]
+                        
+                    log.info(f"Valid operations from schema: {valid_operations}")
+                    
+                    # Build test cases using operations from the schema
+                    operations = []
+                    if len(valid_operations) >= 4:
+                        operations = [
+                            {"operation": valid_operations[0], "a": 5, "b": 3},
+                            {"operation": valid_operations[1], "a": 10, "b": 4},
+                            {"operation": valid_operations[2], "a": 6, "b": 7},
+                            {"operation": valid_operations[3], "a": 15, "b": 3}
+                        ]
+                    else:
+                        # If we don't have enough operations, use the first one multiple times
+                        op = valid_operations[0] if valid_operations else "add"
+                        operations = [
+                            {"operation": op, "a": 5, "b": 3},
+                            {"operation": op, "a": 10, "b": 4},
+                            {"operation": op, "a": 6, "b": 7},
+                            {"operation": op, "a": 15, "b": 3}
+                        ]
                     
                     for params in operations:
                         try:

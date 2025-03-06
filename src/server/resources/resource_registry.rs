@@ -188,7 +188,7 @@ impl ResourceRegistry {
                 return provider.content(params).await;
             }
         }
-
+        debug!("Resource not found: {}", uri);
         Err(Error::Resource(format!("Resource not found: {}", uri)))
     }
 

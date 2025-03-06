@@ -5,8 +5,10 @@
 //! or computations via the server.
 
 use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use serde::{ Deserialize, Serialize };
 use std::collections::HashMap;
+
+use super::protocol::Role;
 
 /// Represents a parameter for a tool
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -101,7 +103,86 @@ pub struct CallToolParams {
     pub arguments: HashMap<String, serde_json::Value>,
 }
 
-/// Text content for a message or tool result
+/// Content annotations as defined in the MCP schema
+#[derive(Serialize, Deserialize, Debug, Clone, JsonSchema)]
+pub struct ContentAnnotations {
+    /// Describes who the intended audience of this object or data is
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub audience: Option<Vec<Role>>,
+
+    /// Describes how important this data is (0-1)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub priority: Option<f32>,
+}
+
+/// ImageContent as defined in the MCP schema
+#[derive(Serialize, Deserialize, Debug, Clone, JsonSchema)]
+pub struct ImageContent {
+    /// The type of content (always "image" for ImageContent)
+    #[serde(rename = "type")]
+    pub content_type: String,
+
+    /// The base64-encoded image data
+    pub data: String,
+
+    /// The MIME type of the image
+    #[serde(rename = "mimeType")]
+    pub mime_type: String,
+
+    /// Optional annotations
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub annotations: Option<ContentAnnotations>,
+}
+
+/// TextResourceContents as defined in the MCP schema
+#[derive(Serialize, Deserialize, Debug, Clone, JsonSchema)]
+pub struct TextResourceContents {
+    /// The content of the resource
+    pub content: String,
+
+    /// The MIME type of the content
+    #[serde(rename = "mimeType")]
+    pub mime_type: String,
+}
+
+/// BlobResourceContents as defined in the MCP schema
+#[derive(Serialize, Deserialize, Debug, Clone, JsonSchema)]
+pub struct BlobResourceContents {
+    /// The base64-encoded data
+    pub data: String,
+
+    /// The MIME type of the content
+    #[serde(rename = "mimeType")]
+    pub mime_type: String,
+}
+
+/// ResourceContent union type
+#[derive(Serialize, Deserialize, Debug, Clone, JsonSchema)]
+#[serde(untagged)]
+pub enum ResourceContent {
+    /// Text resource
+    Text(TextResourceContents),
+
+    /// Binary blob resource
+    Blob(BlobResourceContents),
+}
+
+/// EmbeddedResource as defined in the MCP schema
+#[derive(Serialize, Deserialize, Debug, Clone, JsonSchema)]
+pub struct EmbeddedResource {
+    /// The type of content (always "resource" for EmbeddedResource)
+    #[serde(rename = "type")]
+    pub content_type: String,
+
+    /// The resource content
+    pub resource: ResourceContent,
+
+    /// Optional annotations
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub annotations: Option<ContentAnnotations>,
+}
+
+/// Updated TextContent with proper annotations type
 #[derive(Serialize, Deserialize, Debug, Clone, JsonSchema)]
 pub struct TextContent {
     /// The type of content (always "text" for TextContent)
@@ -111,20 +192,243 @@ pub struct TextContent {
     /// The text content
     pub text: String,
 
-    /// Optional annotations (not used in this implementation)
+    /// Optional annotations
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub annotations: Option<serde_json::Value>,
+    pub annotations: Option<ContentAnnotations>,
+}
+
+/// Union type for all content types
+#[derive(Serialize, Deserialize, Debug, Clone, JsonSchema)]
+#[serde(untagged)]
+pub enum Content {
+    /// Text content
+    Text(TextContent),
+
+    /// Image content
+    Image(ImageContent),
+
+    /// Embedded resource
+    Resource(EmbeddedResource),
 }
 
 /// Result of calling a tool
 #[derive(Serialize, Deserialize, Debug, Clone, JsonSchema)]
 pub struct CallToolResult {
     /// Content of the tool call result
-    pub content: Vec<serde_json::Value>,
+    pub content: Vec<Content>,
 
     /// Flag indicating whether this is an error (using camelCase for Python compatibility)
     #[serde(rename = "isError")]
     pub is_error: bool,
+}
+
+/// Builder for CallToolResult to simplify creating tool results
+pub struct CallToolResultBuilder {
+    content: Vec<Content>,
+    is_error: bool,
+}
+
+impl CallToolResultBuilder {
+    /// Create a new empty result builder
+    pub fn new() -> Self {
+        Self {
+            content: Vec::new(),
+            is_error: false,
+        }
+    }
+
+    /// Add a TextContent item
+    pub fn add_text(mut self, text: impl Into<String>) -> Self {
+        let text_content = TextContent {
+            content_type: "text".to_string(),
+            text: text.into(),
+            annotations: None,
+        };
+
+        self.content.push(Content::Text(text_content));
+        self
+    }
+
+    /// Add a TextContent with annotations
+    pub fn add_text_with_annotations(
+        mut self,
+        text: impl Into<String>,
+        annotations: ContentAnnotations
+    ) -> Self {
+        let text_content = TextContent {
+            content_type: "text".to_string(),
+            text: text.into(),
+            annotations: Some(annotations),
+        };
+
+        self.content.push(Content::Text(text_content));
+        self
+    }
+
+    /// Add an ImageContent item
+    pub fn add_image(mut self, data: impl Into<String>, mime_type: impl Into<String>) -> Self {
+        let image_content = ImageContent {
+            content_type: "image".to_string(),
+            data: data.into(),
+            mime_type: mime_type.into(),
+            annotations: None,
+        };
+
+        self.content.push(Content::Image(image_content));
+        self
+    }
+
+    /// Add an ImageContent with annotations
+    pub fn add_image_with_annotations(
+        mut self,
+        data: impl Into<String>,
+        mime_type: impl Into<String>,
+        annotations: ContentAnnotations
+    ) -> Self {
+        let image_content = ImageContent {
+            content_type: "image".to_string(),
+            data: data.into(),
+            mime_type: mime_type.into(),
+            annotations: Some(annotations),
+        };
+
+        self.content.push(Content::Image(image_content));
+        self
+    }
+
+    /// Add an EmbeddedResource with text content
+    pub fn add_embedded_text_resource(
+        mut self,
+        text: impl Into<String>,
+        mime_type: impl Into<String>
+    ) -> Self {
+        let resource = EmbeddedResource {
+            content_type: "resource".to_string(),
+            resource: ResourceContent::Text(TextResourceContents {
+                content: text.into(),
+                mime_type: mime_type.into(),
+            }),
+            annotations: None,
+        };
+
+        self.content.push(Content::Resource(resource));
+        self
+    }
+
+    /// Add an EmbeddedResource with blob content
+    pub fn add_embedded_blob_resource(
+        mut self,
+        data: impl Into<String>,
+        mime_type: impl Into<String>
+    ) -> Self {
+        let resource = EmbeddedResource {
+            content_type: "resource".to_string(),
+            resource: ResourceContent::Blob(BlobResourceContents {
+                data: data.into(),
+                mime_type: mime_type.into(),
+            }),
+            annotations: None,
+        };
+
+        self.content.push(Content::Resource(resource));
+        self
+    }
+
+    /// Add an EmbeddedResource with annotations
+    pub fn add_embedded_resource_with_annotations(
+        mut self,
+        resource_content: ResourceContent,
+        annotations: ContentAnnotations
+    ) -> Self {
+        let resource = EmbeddedResource {
+            content_type: "resource".to_string(),
+            resource: resource_content,
+            annotations: Some(annotations),
+        };
+
+        self.content.push(Content::Resource(resource));
+        self
+    }
+
+    /// Create audience annotations
+    pub fn audience(roles: Vec<Role>) -> ContentAnnotations {
+        ContentAnnotations {
+            audience: Some(roles),
+            priority: None,
+        }
+    }
+
+    /// Create priority annotations
+    pub fn priority(value: f32) -> ContentAnnotations {
+        let priority = if value < 0.0 { 0.0 } else if value > 1.0 { 1.0 } else { value };
+
+        ContentAnnotations {
+            audience: None,
+            priority: Some(priority),
+        }
+    }
+
+    /// Create combined annotations
+    pub fn annotations(audience: Option<Vec<Role>>, priority: Option<f32>) -> ContentAnnotations {
+        let normalized_priority = priority.map(|p| {
+            if p < 0.0 { 0.0 } else if p > 1.0 { 1.0 } else { p }
+        });
+
+        ContentAnnotations {
+            audience,
+            priority: normalized_priority,
+        }
+    }
+
+    /// Mark this result as an error
+    pub fn with_error(mut self) -> Self {
+        self.is_error = true;
+        self
+    }
+
+    /// Build the final CallToolResult
+    pub fn build(self) -> CallToolResult {
+        // If no content was added, add an empty text content
+        let content = if self.content.is_empty() {
+            vec![
+                Content::Text(TextContent {
+                    content_type: "text".to_string(),
+                    text: "".to_string(),
+                    annotations: None,
+                })
+            ]
+        } else {
+            self.content
+        };
+
+        CallToolResult {
+            content,
+            is_error: self.is_error,
+        }
+    }
+}
+
+impl Default for CallToolResultBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl CallToolResult {
+    /// Create a new builder
+    pub fn builder() -> CallToolResultBuilder {
+        CallToolResultBuilder::new()
+    }
+
+    /// Create a simple text result
+    pub fn text(text: impl Into<String>) -> Self {
+        CallToolResultBuilder::new().add_text(text).build()
+    }
+
+    /// Create a simple error result
+    pub fn error(error_message: impl Into<String>) -> Self {
+        CallToolResultBuilder::new().add_text(error_message).with_error().build()
+    }
 }
 
 // Instead of directly implementing JsonSchema for Tool, create a helper struct
@@ -190,8 +494,8 @@ impl From<&Tool> for ToolSchema {
                                     enum_values
                                         .iter()
                                         .map(|v| serde_json::Value::String(v.clone()))
-                                        .collect(),
-                                ),
+                                        .collect()
+                                )
                             );
                         }
                     }
@@ -242,20 +546,14 @@ impl From<&Tool> for ToolSchema {
 
 // Implement Serialize for Tool to properly handle the inputSchema field
 impl Serialize for Tool {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error> where S: serde::Serializer {
         ToolSchema::from(self).serialize(serializer)
     }
 }
 
 // Implement Deserialize for Tool
 impl<'de> Deserialize<'de> for Tool {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error> where D: serde::Deserializer<'de> {
         #[derive(Deserialize)]
         struct ToolHelper {
             name: String,
@@ -306,11 +604,14 @@ impl<'de> Deserialize<'de> for Tool {
                         })
                         .unwrap_or(ToolParameterType::String);
 
-                    let enum_values = schema.get("enum").and_then(|e| e.as_array()).map(|arr| {
-                        arr.iter()
-                            .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                            .collect()
-                    });
+                    let enum_values = schema
+                        .get("enum")
+                        .and_then(|e| e.as_array())
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                                .collect()
+                        });
 
                     let default = schema.get("default").cloned();
 
@@ -324,7 +625,6 @@ impl<'de> Deserialize<'de> for Tool {
                         enum_values,
                     });
                 }
-
                 Some(params)
             } else {
                 None
@@ -353,7 +653,7 @@ impl JsonSchema for Tool {
     }
 
     fn json_schema(
-        schema_generator: &mut schemars::r#gen::SchemaGenerator,
+        schema_generator: &mut schemars::r#gen::SchemaGenerator
     ) -> schemars::schema::Schema {
         <ToolSchema as JsonSchema>::json_schema(schema_generator)
     }
@@ -410,7 +710,12 @@ impl ToolParameterBuilder {
 
     /// Set enum values for string parameters
     pub fn enum_values(mut self, values: Vec<impl Into<String>>) -> Self {
-        self.enum_values = Some(values.into_iter().map(|v| v.into()).collect());
+        self.enum_values = Some(
+            values
+                .into_iter()
+                .map(|v| v.into())
+                .collect()
+        );
         self
     }
 
@@ -467,7 +772,7 @@ impl ToolBuilder {
     pub fn parameter(
         self,
         name: impl Into<String>,
-        type_name: ToolParameterType,
+        type_name: ToolParameterType
     ) -> (Self, ToolParameterBuilder) {
         (self, ToolParameterBuilder::new(name, type_name))
     }
@@ -596,6 +901,21 @@ impl ToolBuilderExt for ToolBuilder {
     }
 }
 
+/// Trait for types that can be converted to a Tool
+///
+/// This trait is meant to be implemented by the #[derive(Tool)] macro
+/// from the tool-derive crate.
+pub trait ToTool {
+    /// Convert this struct into a Tool
+    fn to_tool(&self) -> Tool;
+}
+
+/// Trait for enums that can provide their possible values as strings
+pub trait EnumValues {
+    /// Returns all possible enum values as strings
+    fn enum_values() -> Vec<String>;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -611,28 +931,30 @@ mod tests {
                     .enum_values(vec!["add", "subtract", "multiply", "divide"])
                     .default("add")
                     .unwrap()
-                    .build(),
+                    .build()
             )
             .add_parameter(
                 ToolParameterBuilder::new("a", ToolParameterType::Number)
                     .description("First operand")
                     .required(true)
-                    .build(),
+                    .build()
             )
             .add_parameter(
                 ToolParameterBuilder::new("b", ToolParameterType::Number)
                     .description("Second operand")
                     .required(true)
-                    .build(),
+                    .build()
             )
             .return_type("object")
-            .return_schema(json!({
+            .return_schema(
+                json!({
                 "type": "object",
                 "properties": {
                     "result": { "type": "number" }
                 },
                 "required": ["result"]
-            }))
+            })
+            )
             .streaming(false)
             .cancellable(false)
             .timeout(30)
@@ -648,9 +970,10 @@ mod tests {
 
     #[test]
     fn test_tool_builder_with_extension_trait() {
-        let (builder_box, param_builder) =
-            ToolBuilder::new("calculator", "Performs basic calculations")
-                .add_string_parameter("operation");
+        let (builder_box, param_builder) = ToolBuilder::new(
+            "calculator",
+            "Performs basic calculations"
+        ).add_string_parameter("operation");
 
         let tool = (*builder_box)
             .with_parameter(
@@ -659,7 +982,7 @@ mod tests {
                     .required(true)
                     .enum_values(vec!["add", "subtract", "multiply", "divide"])
                     .default("add")
-                    .unwrap(),
+                    .unwrap()
             )
             .build();
 

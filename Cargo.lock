@@ -2485,6 +2485,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "tool-derive"
+version = "0.1.0"
+dependencies = [
+ "async-std",
+ "async-trait",
+ "insta",
+ "mcp-rs",
+ "proc-macro2",
+ "quote",
+ "serde",
+ "serde_json",
+ "syn 2.0.99",
+ "tokio",
+ "tokio-test",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "tower"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"

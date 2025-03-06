@@ -317,18 +317,7 @@ pub mod schema {
     use crate::types::resources::ReadResourceResult;
     use crate::types::{
         initialize::{ InitializeRequestParams, InitializeResult },
-        prompts::{
-            CreatePromptParams,
-            CreatePromptResult,
-            DeletePromptParams,
-            DeletePromptResult,
-            ListPromptsParams,
-            ListPromptsResult,
-            RenderPromptParams,
-            RenderPromptResult,
-            UpdatePromptParams,
-            UpdatePromptResult,
-        },
+        prompts::{ ListPromptsParams, ListPromptsResult },
         resources::{
             CreateResourceParams,
             CreateResourceResult,
@@ -352,7 +341,7 @@ pub mod schema {
         }
 
         // Try to use the embedded schema if available
-        let schema_content = include_str!("../src/schema/schema.json");
+        let schema_content = include_str!("../src/protocol/protocol.json");
         let schema_value: Value = serde_json
             ::from_str(schema_content)
             .map_err(|e| Error::SchemaValidation(format!("Failed to parse schema.json: {}", e)))?;
@@ -465,10 +454,6 @@ pub mod schema {
 
             // Prompt methods
             registry.insert("prompts/list".to_string(), generate_schema::<ListPromptsParams>());
-            registry.insert("prompts/create".to_string(), generate_schema::<CreatePromptParams>());
-            registry.insert("prompts/update".to_string(), generate_schema::<UpdatePromptParams>());
-            registry.insert("prompts/delete".to_string(), generate_schema::<DeletePromptParams>());
-            registry.insert("prompts/render".to_string(), generate_schema::<RenderPromptParams>());
 
             registry
         })
@@ -505,10 +490,6 @@ pub mod schema {
 
             // Prompt methods
             registry.insert("prompts/list".to_string(), generate_schema::<ListPromptsResult>());
-            registry.insert("prompts/create".to_string(), generate_schema::<CreatePromptResult>());
-            registry.insert("prompts/update".to_string(), generate_schema::<UpdatePromptResult>());
-            registry.insert("prompts/delete".to_string(), generate_schema::<DeletePromptResult>());
-            registry.insert("prompts/render".to_string(), generate_schema::<RenderPromptResult>());
 
             registry
         })

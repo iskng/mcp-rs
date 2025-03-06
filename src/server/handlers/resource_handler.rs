@@ -114,6 +114,7 @@ impl ResourceHandler {
         client_id: &str,
         request: &Request
     ) -> Result<Response, Error> {
+        debug!("handle_read_resource: {:?}", request);
         let params = match &request.params {
             Some(p) =>
                 serde_json
@@ -125,10 +126,10 @@ impl ResourceHandler {
                 return Err(Error::InvalidParams("Missing params for read resource".to_string()));
             }
         };
-
+        debug!("Reading resource: {}", params.uri);
         let content = self.registry.read_resource(&params.uri).await?;
-        let result = ReadResourceResult { content };
-
+        let result = ReadResourceResult { contents: vec![content] };
+        debug!("Resource read: {:?}", result);
         Ok(Response {
             jsonrpc: "2.0".to_string(),
             id: request.id,

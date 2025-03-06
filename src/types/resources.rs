@@ -197,9 +197,8 @@ pub struct ReadResourceParams {
 /// Result of reading a resource
 #[derive(Serialize, Deserialize, Debug, Clone, JsonSchema)]
 pub struct ReadResourceResult {
-    /// Content of the resource
-    #[serde(flatten)]
-    pub content: ResourceContent,
+    /// Contents of the resource
+    pub contents: Vec<ResourceContent>,
 }
 
 /// Parameters for subscribing to a resource
