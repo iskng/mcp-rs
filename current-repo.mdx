@@ -255,7 +255,7 @@ name: sse_server.rs
 //! - Routes messages between clients and the MCP server
 
 use crate::errors::Error;
-use crate::messages::Message;
+use crate::types::protocol::Message;
 use crate::transport::Transport;
 use async_stream;
 use async_trait::async_trait;
@@ -895,7 +895,7 @@ use tokio_tungstenite::{
 use url::Url;
 
 use crate::errors::Error;
-use crate::messages::Message;
+use crate::types::protocol::Message;
 use crate::transport::{Transport, TransportLifecycleEvent};
 
 /// Default connection timeout
@@ -5193,7 +5193,7 @@ use tokio::sync::{Mutex, mpsc, oneshot};
 use url::Url;
 
 use crate::errors::Error;
-use crate::messages::Message;
+use crate::types::protocol::Message;
 use crate::transport::{Transport, TransportLifecycleEvent};
 
 /// Default timeout for HTTP requests
@@ -5779,7 +5779,7 @@ name: stdio.rs
 //! for local subprocess communication in CLI-based MCP servers.
 
 use crate::errors::Error;
-use crate::messages::Message;
+use crate::types::protocol::Message;
 use crate::transport::Transport;
 use crate::transport::TransportLifecycleEvent;
 use async_trait::async_trait;
@@ -6379,7 +6379,7 @@ name: mod.rs
 //! It includes the `Transport` trait and utilities for managing message transmission.
 
 use crate::errors::Error;
-use crate::messages::Message;
+use crate::types::protocol::Message;
 use async_trait::async_trait;
 
 pub mod sse;
@@ -8217,7 +8217,7 @@ name: websocket_server.rs
 //! - Provides client tracking and management
 
 use crate::errors::Error;
-use crate::messages::Message;
+use crate::types::protocol::Message;
 use crate::transport::{ Transport, TransportLifecycleEvent };
 use async_trait::async_trait;
 use axum::{

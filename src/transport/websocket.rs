@@ -14,9 +14,8 @@ use tokio_tungstenite::{ connect_async, tungstenite::protocol::Message as WsMess
 use url::Url;
 
 use crate::errors::Error;
-use crate::messages::Message;
+use crate::types::protocol::Message;
 use crate::transport::Transport;
-use crate::lifecycle::{ LifecycleEvent, LifecycleManager };
 
 /// Default connection timeout
 const DEFAULT_CONNECTION_TIMEOUT: Duration = Duration::from_secs(30);
@@ -72,8 +71,6 @@ pub struct WebSocketTransport {
     connection_task: Option<tokio::task::JoinHandle<()>>,
     /// Signal to indicate the transport is shutting down
     shutdown: Arc<Mutex<bool>>,
-    /// Lifecycle manager for handling lifecycle events
-    lifecycle_manager: Arc<LifecycleManager>,
 }
 
 impl WebSocketTransport {
@@ -96,7 +93,6 @@ impl WebSocketTransport {
         let connected = Arc::new(Mutex::new(false));
         let ready = Arc::new(Mutex::new(false));
         let shutdown = Arc::new(Mutex::new(false));
-        let lifecycle_manager = Arc::new(LifecycleManager::new());
 
         // Notify Starting lifecycle event
         tracing::info!("WebSocket transport starting");
@@ -106,7 +102,6 @@ impl WebSocketTransport {
         let shutdown_clone = shutdown.clone();
         let url_clone = url.clone();
         let options_clone = options.clone();
-        let lifecycle_manager_clone = lifecycle_manager.clone();
 
         // Start background task for WebSocket communication
         let connection_task = tokio::spawn(async move {
@@ -118,8 +113,7 @@ impl WebSocketTransport {
                 rx_out,
                 connected_clone,
                 ready_clone,
-                shutdown_clone,
-                lifecycle_manager_clone
+                shutdown_clone
             ).await;
             tracing::info!("WebSocket connection task completed");
         });
@@ -133,23 +127,7 @@ impl WebSocketTransport {
             ready,
             connection_task: Some(connection_task),
             shutdown,
-            lifecycle_manager,
         })
-    }
-
-    /// Register a lifecycle handler
-    pub fn register_lifecycle_handler<F>(&self, handler: F)
-        where F: Fn(LifecycleEvent) + Send + Sync + 'static
-    {
-        self.lifecycle_manager.register_event_handler(handler);
-    }
-
-    /// Notify lifecycle events
-    async fn notify_lifecycle_event(
-        lifecycle_manager: &Arc<LifecycleManager>,
-        event: LifecycleEvent
-    ) {
-        lifecycle_manager.notify_event(event);
     }
 
     /// Run the WebSocket connection loop
@@ -160,8 +138,7 @@ impl WebSocketTransport {
         rx_out: mpsc::Receiver<Message>,
         connected: Arc<Mutex<bool>>,
         ready: Arc<Mutex<bool>>,
-        shutdown: Arc<Mutex<bool>>,
-        lifecycle_manager: Arc<LifecycleManager>
+        shutdown: Arc<Mutex<bool>>
     ) {
         // Create a new channel for reconnection signals
         let (reconnect_tx, _reconnect_rx) = mpsc::channel::<()>(1);
@@ -188,8 +165,7 @@ impl WebSocketTransport {
                 rx_out,
                 connected.clone(),
                 ready.clone(),
-                shutdown.clone(),
-                lifecycle_manager.clone()
+                shutdown.clone()
             ).await;
 
             if result {
@@ -238,8 +214,7 @@ impl WebSocketTransport {
         mut rx_out: mpsc::Receiver<Message>,
         connected: Arc<Mutex<bool>>,
         ready: Arc<Mutex<bool>>,
-        shutdown: Arc<Mutex<bool>>,
-        lifecycle_manager: Arc<LifecycleManager>
+        shutdown: Arc<Mutex<bool>>
     ) -> bool {
         tracing::info!("Connecting to WebSocket at {}", url);
 

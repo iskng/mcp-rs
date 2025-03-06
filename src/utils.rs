@@ -5,14 +5,14 @@
 //! the crate.
 
 use crate::errors::Error;
-use crate::messages::{ErrorData, Message, Response, ResponseOutcome};
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use crate::types::protocol::{ ErrorData, Message, Response, ResponseOutcome };
+use serde::{ Deserialize, Serialize, de::DeserializeOwned };
 use serde_json::Value;
 use std::future::Future;
 use std::str::FromStr;
 use std::time::Duration;
 use tokio::time::timeout as tokio_timeout;
-use tracing::{debug, trace, warn};
+use tracing::{ debug, trace, warn };
 use url::Url;
 
 //=============================================================================
@@ -40,9 +40,11 @@ pub mod json {
 
     /// Extract a field from a JSON Value as a specific type
     pub fn extract_field<T: DeserializeOwned>(value: &Value, field: &str) -> Result<T, Error> {
-        let field_value = value.get(field).ok_or_else(|| {
-            Error::Protocol(format!("Field '{}' not found in JSON object", field))
-        })?;
+        let field_value = value
+            .get(field)
+            .ok_or_else(|| {
+                Error::Protocol(format!("Field '{}' not found in JSON object", field))
+            })?;
 
         serde_json::from_value(field_value.clone()).map_err(Error::Json)
     }
@@ -166,7 +168,7 @@ pub mod errors {
         id: i32,
         code: i32,
         message: &str,
-        data: Option<Value>,
+        data: Option<Value>
     ) -> Response {
         Response {
             jsonrpc: "2.0".to_string(),
@@ -192,7 +194,7 @@ pub mod errors {
             id,
             error_codes::METHOD_NOT_FOUND,
             &format!("Method not found: {}", method),
-            None,
+            None
         )
     }
 
@@ -212,7 +214,7 @@ pub mod errors {
             id,
             error_codes::RESOURCE_NOT_FOUND,
             &format!("Resource not found: {}", uri),
-            None,
+            None
         )
     }
 
@@ -222,7 +224,7 @@ pub mod errors {
             id,
             error_codes::TOOL_NOT_FOUND,
             &format!("Tool not found: {}", tool_name),
-            None,
+            None
         )
     }
 
@@ -232,7 +234,7 @@ pub mod errors {
             id,
             error_codes::TOOL_EXECUTION_ERROR,
             &format!("Error executing tool {}: {}", tool_name, error_msg),
-            None,
+            None
         )
     }
 }
@@ -247,15 +249,11 @@ pub mod async_utils {
 
     /// Run a future with a timeout
     pub async fn timeout<F, T>(duration: Duration, future: F) -> Result<T, Error>
-    where
-        F: Future<Output = Result<T, Error>>,
+        where F: Future<Output = Result<T, Error>>
     {
         match tokio_timeout(duration, future).await {
             Ok(result) => result,
-            Err(_) => Err(Error::Other(format!(
-                "Operation timed out after {:?}",
-                duration
-            ))),
+            Err(_) => Err(Error::Other(format!("Operation timed out after {:?}", duration))),
         }
     }
 
@@ -263,11 +261,10 @@ pub mod async_utils {
     pub async fn retry<F, Fut, T>(
         operation: F,
         max_attempts: usize,
-        initial_backoff: Duration,
-    ) -> Result<T, Error>
-    where
-        F: Fn() -> Fut,
-        Fut: Future<Output = Result<T, Error>>,
+        initial_backoff: Duration
+    )
+        -> Result<T, Error>
+        where F: Fn() -> Fut, Fut: Future<Output = Result<T, Error>>
     {
         let mut attempts = 0;
         let mut backoff = initial_backoff;
@@ -283,10 +280,7 @@ pub mod async_utils {
                         return Err(error);
                     }
 
-                    debug!(
-                        "Retry attempt {}/{} failed: {}",
-                        attempts, max_attempts, error
-                    );
+                    debug!("Retry attempt {}/{} failed: {}", attempts, max_attempts, error);
                     tokio::time::sleep(backoff).await;
                     backoff *= 2; // Exponential backoff
                 }
@@ -296,12 +290,11 @@ pub mod async_utils {
 
     /// Cancel a future after a specified duration
     pub async fn with_timeout<F, T>(future: F, duration: Duration) -> Result<T, Error>
-    where
-        F: Future<Output = T>,
+        where F: Future<Output = T>
     {
-        tokio_timeout(duration, future)
-            .await
-            .map_err(|_| Error::Other(format!("Operation timed out after {:?}", duration)))
+        tokio_timeout(duration, future).await.map_err(|_|
+            Error::Other(format!("Operation timed out after {:?}", duration))
+        )
     }
 }
 
@@ -319,20 +312,34 @@ pub mod schema {
     use std::sync::OnceLock;
 
     use crate::errors::Error;
-    use crate::messages::{GenericRequest, Message, Response};
+    use crate::types::protocol::{ Message, Response, Request };
     use crate::types::{
-        initialize::{InitializeRequestParams, InitializeResult},
+        initialize::{ InitializeRequestParams, InitializeResult },
         prompts::{
-            CreatePromptParams, CreatePromptResult, DeletePromptParams, DeletePromptResult,
-            ListPromptsParams, ListPromptsResult, RenderPromptParams, RenderPromptResult,
-            UpdatePromptParams, UpdatePromptResult,
+            CreatePromptParams,
+            CreatePromptResult,
+            DeletePromptParams,
+            DeletePromptResult,
+            ListPromptsParams,
+            ListPromptsResult,
+            RenderPromptParams,
+            RenderPromptResult,
+            UpdatePromptParams,
+            UpdatePromptResult,
         },
         resources::{
-            CreateResourceParams, CreateResourceResult, DeleteResourceParams, DeleteResourceResult,
-            GetResourceParams, GetResourceResult, ListResourcesParams, ListResourcesResult,
-            UpdateResourceParams, UpdateResourceResult,
+            CreateResourceParams,
+            CreateResourceResult,
+            DeleteResourceParams,
+            DeleteResourceResult,
+            GetResourceParams,
+            GetResourceResult,
+            ListResourcesParams,
+            ListResourcesResult,
+            UpdateResourceParams,
+            UpdateResourceResult,
         },
-        tools::{CallToolParams, CallToolResult, ListToolsParams, ListToolsResult},
+        tools::{ CallToolParams, CallToolResult, ListToolsParams, ListToolsResult },
     };
 
     // Static reference to compiled full schema
@@ -346,17 +353,19 @@ pub mod schema {
 
         // Try to use the embedded schema if available
         let schema_content = include_str!("../src/schema/schema.json");
-        let schema_value: Value = serde_json::from_str(schema_content)
+        let schema_value: Value = serde_json
+            ::from_str(schema_content)
             .map_err(|e| Error::SchemaValidation(format!("Failed to parse schema.json: {}", e)))?;
 
         // Compile the schema
-        let compiled = JSONSchema::compile(&schema_value)
-            .map_err(|e| Error::SchemaValidation(format!("Failed to compile schema: {}", e)))?;
+        let compiled = JSONSchema::compile(&schema_value).map_err(|e|
+            Error::SchemaValidation(format!("Failed to compile schema: {}", e))
+        )?;
 
         // Store the compiled schema
-        FULL_SCHEMA
-            .set(compiled)
-            .map_err(|_| Error::SchemaValidation("Failed to set compiled schema".to_string()))?;
+        FULL_SCHEMA.set(compiled).map_err(|_|
+            Error::SchemaValidation("Failed to set compiled schema".to_string())
+        )?;
 
         Ok(())
     }
@@ -367,10 +376,11 @@ pub mod schema {
             let validation = schema.validate(value);
             if let Err(errors) = validation {
                 let error_msgs: Vec<String> = errors.map(|e| format!("{}", e)).collect();
-                return Err(Error::SchemaValidation(format!(
-                    "Schema validation failed: {}",
-                    error_msgs.join(", ")
-                )));
+                return Err(
+                    Error::SchemaValidation(
+                        format!("Schema validation failed: {}", error_msgs.join(", "))
+                    )
+                );
             }
             Ok(())
         } else {
@@ -380,14 +390,15 @@ pub mod schema {
     }
 
     /// Validate a request message against the full MCP schema
-    pub fn validate_request_against_full_schema(request: &GenericRequest) -> Result<(), Error> {
+    pub fn validate_request_against_full_schema(request: &Request) -> Result<(), Error> {
         // Schema is expected to be initialized by the caller
         if FULL_SCHEMA.get().is_none() {
             // Schema not available, just succeed
             return Ok(());
         }
 
-        let json_value = serde_json::to_value(request)
+        let json_value = serde_json
+            ::to_value(request)
             .map_err(|e| Error::SchemaValidation(format!("Failed to serialize request: {}", e)))?;
 
         validate_against_full_schema(&json_value)
@@ -401,7 +412,8 @@ pub mod schema {
             return Ok(());
         }
 
-        let json_value = serde_json::to_value(response)
+        let json_value = serde_json
+            ::to_value(response)
             .map_err(|e| Error::SchemaValidation(format!("Failed to serialize response: {}", e)))?;
 
         validate_against_full_schema(&json_value)
@@ -415,7 +427,8 @@ pub mod schema {
             return Ok(());
         }
 
-        let json_value = serde_json::to_value(message)
+        let json_value = serde_json
+            ::to_value(message)
             .map_err(|e| Error::SchemaValidation(format!("Failed to serialize message: {}", e)))?;
 
         validate_against_full_schema(&json_value)
@@ -428,64 +441,34 @@ pub mod schema {
             let mut registry = HashMap::new();
 
             // Initialize method
-            registry.insert(
-                "initialize".to_string(),
-                generate_schema::<InitializeRequestParams>(),
-            );
+            registry.insert("initialize".to_string(), generate_schema::<InitializeRequestParams>());
 
             // Resource methods
-            registry.insert(
-                "resources/list".to_string(),
-                generate_schema::<ListResourcesParams>(),
-            );
-            registry.insert(
-                "resources/get".to_string(),
-                generate_schema::<GetResourceParams>(),
-            );
+            registry.insert("resources/list".to_string(), generate_schema::<ListResourcesParams>());
+            registry.insert("resources/get".to_string(), generate_schema::<GetResourceParams>());
             registry.insert(
                 "resources/create".to_string(),
-                generate_schema::<CreateResourceParams>(),
+                generate_schema::<CreateResourceParams>()
             );
             registry.insert(
                 "resources/update".to_string(),
-                generate_schema::<UpdateResourceParams>(),
+                generate_schema::<UpdateResourceParams>()
             );
             registry.insert(
                 "resources/delete".to_string(),
-                generate_schema::<DeleteResourceParams>(),
+                generate_schema::<DeleteResourceParams>()
             );
 
             // Tool methods
-            registry.insert(
-                "tools/list".to_string(),
-                generate_schema::<ListToolsParams>(),
-            );
-            registry.insert(
-                "tools/call".to_string(),
-                generate_schema::<CallToolParams>(),
-            );
+            registry.insert("tools/list".to_string(), generate_schema::<ListToolsParams>());
+            registry.insert("tools/call".to_string(), generate_schema::<CallToolParams>());
 
             // Prompt methods
-            registry.insert(
-                "prompts/list".to_string(),
-                generate_schema::<ListPromptsParams>(),
-            );
-            registry.insert(
-                "prompts/create".to_string(),
-                generate_schema::<CreatePromptParams>(),
-            );
-            registry.insert(
-                "prompts/update".to_string(),
-                generate_schema::<UpdatePromptParams>(),
-            );
-            registry.insert(
-                "prompts/delete".to_string(),
-                generate_schema::<DeletePromptParams>(),
-            );
-            registry.insert(
-                "prompts/render".to_string(),
-                generate_schema::<RenderPromptParams>(),
-            );
+            registry.insert("prompts/list".to_string(), generate_schema::<ListPromptsParams>());
+            registry.insert("prompts/create".to_string(), generate_schema::<CreatePromptParams>());
+            registry.insert("prompts/update".to_string(), generate_schema::<UpdatePromptParams>());
+            registry.insert("prompts/delete".to_string(), generate_schema::<DeletePromptParams>());
+            registry.insert("prompts/render".to_string(), generate_schema::<RenderPromptParams>());
 
             registry
         })
@@ -498,64 +481,34 @@ pub mod schema {
             let mut registry = HashMap::new();
 
             // Initialize method
-            registry.insert(
-                "initialize".to_string(),
-                generate_schema::<InitializeResult>(),
-            );
+            registry.insert("initialize".to_string(), generate_schema::<InitializeResult>());
 
             // Resource methods
-            registry.insert(
-                "resources/list".to_string(),
-                generate_schema::<ListResourcesResult>(),
-            );
-            registry.insert(
-                "resources/get".to_string(),
-                generate_schema::<GetResourceResult>(),
-            );
+            registry.insert("resources/list".to_string(), generate_schema::<ListResourcesResult>());
+            registry.insert("resources/get".to_string(), generate_schema::<GetResourceResult>());
             registry.insert(
                 "resources/create".to_string(),
-                generate_schema::<CreateResourceResult>(),
+                generate_schema::<CreateResourceResult>()
             );
             registry.insert(
                 "resources/update".to_string(),
-                generate_schema::<UpdateResourceResult>(),
+                generate_schema::<UpdateResourceResult>()
             );
             registry.insert(
                 "resources/delete".to_string(),
-                generate_schema::<DeleteResourceResult>(),
+                generate_schema::<DeleteResourceResult>()
             );
 
             // Tool methods
-            registry.insert(
-                "tools/list".to_string(),
-                generate_schema::<ListToolsResult>(),
-            );
-            registry.insert(
-                "tools/call".to_string(),
-                generate_schema::<CallToolResult>(),
-            );
+            registry.insert("tools/list".to_string(), generate_schema::<ListToolsResult>());
+            registry.insert("tools/call".to_string(), generate_schema::<CallToolResult>());
 
             // Prompt methods
-            registry.insert(
-                "prompts/list".to_string(),
-                generate_schema::<ListPromptsResult>(),
-            );
-            registry.insert(
-                "prompts/create".to_string(),
-                generate_schema::<CreatePromptResult>(),
-            );
-            registry.insert(
-                "prompts/update".to_string(),
-                generate_schema::<UpdatePromptResult>(),
-            );
-            registry.insert(
-                "prompts/delete".to_string(),
-                generate_schema::<DeletePromptResult>(),
-            );
-            registry.insert(
-                "prompts/render".to_string(),
-                generate_schema::<RenderPromptResult>(),
-            );
+            registry.insert("prompts/list".to_string(), generate_schema::<ListPromptsResult>());
+            registry.insert("prompts/create".to_string(), generate_schema::<CreatePromptResult>());
+            registry.insert("prompts/update".to_string(), generate_schema::<UpdatePromptResult>());
+            registry.insert("prompts/delete".to_string(), generate_schema::<DeletePromptResult>());
+            registry.insert("prompts/render".to_string(), generate_schema::<RenderPromptResult>());
 
             registry
         })
@@ -574,17 +527,17 @@ pub mod schema {
 
     /// Validate the given value against a specific JSON schema
     pub fn validate_against_schema(value: &Value, schema: &Value) -> Result<(), Error> {
-        let compiled = JSONSchema::compile(schema)
-            .map_err(|e| Error::Protocol(format!("Invalid schema: {}", e)))?;
+        let compiled = JSONSchema::compile(schema).map_err(|e|
+            Error::Protocol(format!("Invalid schema: {}", e))
+        )?;
 
         let validation = compiled.validate(value);
         if let Err(errors) = validation {
             let error_msgs: Vec<String> = errors.map(|e| format!("{}", e)).collect();
 
-            return Err(Error::InvalidParams(format!(
-                "Schema validation failed: {}",
-                error_msgs.join(", ")
-            )));
+            return Err(
+                Error::InvalidParams(format!("Schema validation failed: {}", error_msgs.join(", ")))
+            );
         }
 
         Ok(())
@@ -676,9 +629,7 @@ pub mod auth {
         if let Some(key) = header.strip_prefix("Bearer ") {
             Ok(ApiKey::new(key))
         } else {
-            Err(Error::Protocol(
-                "Invalid authentication header format".to_string(),
-            ))
+            Err(Error::Protocol("Invalid authentication header format".to_string()))
         }
     }
 }
@@ -698,18 +649,21 @@ pub mod logging {
                 debug!("MCP Request: method={}, id={:?}", req.method, req.id);
                 trace!("Request params: {:?}", req.params);
             }
-            Message::Response(resp) => match &resp.outcome {
-                ResponseOutcome::Success { result: _ } => {
-                    debug!("MCP Response: id={}, success=true", resp.id);
-                    trace!("Response result: {:?}", resp.outcome);
+            Message::Response(resp) =>
+                match &resp.outcome {
+                    ResponseOutcome::Success { result: _ } => {
+                        debug!("MCP Response: id={}, success=true", resp.id);
+                        trace!("Response result: {:?}", resp.outcome);
+                    }
+                    ResponseOutcome::Error { error } => {
+                        warn!(
+                            "MCP Error Response: id={}, code={}, message={}",
+                            resp.id,
+                            error.code,
+                            error.message
+                        );
+                    }
                 }
-                ResponseOutcome::Error { error } => {
-                    warn!(
-                        "MCP Error Response: id={}, code={}, message={}",
-                        resp.id, error.code, error.message
-                    );
-                }
-            },
             Message::Notification(notification) => {
                 debug!("MCP Notification: method={}", notification.method);
                 trace!("Notification params: {:?}", notification.params);
@@ -785,17 +739,17 @@ pub mod logging {
 
 // Re-export commonly used utilities
 pub use async_utils::timeout;
-pub use errors::{create_error_response, invalid_params, method_not_found};
-pub use json::{from_str, to_string};
+pub use errors::{ create_error_response, invalid_params, method_not_found };
+pub use json::{ from_str, to_string };
 pub use logging::log_message;
 pub use schema::validate;
-pub use uri::{McpUri, validate_uri};
+pub use uri::{ McpUri, validate_uri };
 
 /// Validation module for request and response validation
 pub mod validation {
     use super::schema;
     use crate::errors::Error;
-    use crate::messages::{GenericRequest, Response, ResponseOutcome};
+    use crate::types::protocol::{ Request, Response, ResponseOutcome };
 
     /// Configuration for schema validation
     #[derive(Debug, Clone, Copy)]
@@ -816,10 +770,7 @@ pub mod validation {
     }
 
     /// Validate an incoming request against its method schema
-    pub fn validate_request(
-        request: &GenericRequest,
-        config: &ValidationConfig,
-    ) -> Result<(), Error> {
+    pub fn validate_request(request: &Request, config: &ValidationConfig) -> Result<(), Error> {
         // Skip validation if disabled
         if !config.validate_requests {
             return Ok(());
@@ -849,7 +800,7 @@ pub mod validation {
     pub fn validate_response(
         response: &Response,
         method: &str,
-        config: &ValidationConfig,
+        config: &ValidationConfig
     ) -> Result<(), Error> {
         // Skip validation if disabled
         if !config.validate_responses {

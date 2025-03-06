@@ -7,9 +7,8 @@
 //! - Provides client tracking and management
 
 use crate::errors::Error;
-use crate::messages::Message;
+use crate::types::protocol::Message;
 use crate::transport::Transport;
-use crate::lifecycle::{ LifecycleEvent, LifecycleManager };
 use async_trait::async_trait;
 use axum::{
     Extension,
@@ -87,7 +86,6 @@ struct ClientConnection {
 struct AppState {
     clients: Arc<Mutex<HashMap<String, ClientConnection>>>,
     message_tx: mpsc::Sender<(String, Result<Message, Error>)>,
-    transport_lifecycle: Arc<Mutex<Vec<Box<dyn Fn(LifecycleEvent) + Send + Sync>>>>,
 }
 
 /// Server-side implementation of the WebSocket transport using Axum
@@ -106,8 +104,6 @@ pub struct WebSocketServerTransport {
     server_handle: Option<tokio::task::JoinHandle<()>>,
     /// Is the transport connected
     connected: bool,
-    /// Lifecycle manager for handling lifecycle events
-    lifecycle_manager: Arc<LifecycleManager>,
 }
 
 impl WebSocketServerTransport {
@@ -128,20 +124,7 @@ impl WebSocketServerTransport {
             options,
             server_handle: None,
             connected: false,
-            lifecycle_manager: Arc::new(LifecycleManager::new()),
         }
-    }
-
-    /// Register a lifecycle handler
-    pub fn register_lifecycle_handler<F>(&self, handler: F)
-        where F: Fn(LifecycleEvent) + Send + Sync + 'static
-    {
-        self.lifecycle_manager.register_event_handler(handler);
-    }
-
-    /// Notify lifecycle events
-    fn notify_lifecycle(&self, event: LifecycleEvent) {
-        self.lifecycle_manager.notify_event(event);
     }
 
     /// Start the WebSocket server
@@ -157,7 +140,6 @@ impl WebSocketServerTransport {
         let app_state = AppState {
             clients: self.clients.clone(),
             message_tx: self.message_tx.clone(),
-            transport_lifecycle: Arc::new(Mutex::new(Vec::new())),
         };
 
         // Create a CORS layer
@@ -235,7 +217,6 @@ async fn ws_handler(
 async fn handle_socket(socket: WebSocket, state: AppState) {
     let clients = state.clients.clone();
     let message_tx = state.message_tx.clone();
-    let lifecycle_handlers = state.transport_lifecycle.clone();
 
     // Check if we've reached maximum clients
     {
@@ -266,33 +247,18 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
 
     tracing::info!("New WebSocket client connected: {}", client_id);
 
-    // Notify client connected lifecycle event
-    {
-        let handlers = lifecycle_handlers.lock().unwrap();
-        for handler in handlers.iter() {
-            handler(LifecycleEvent::ClientConnected(client_id.clone()));
-        }
-    }
-
     // Split the socket
     let (mut sender_socket, mut receiver_socket) = socket.split();
 
     // Clone for cleanup
     let clients_for_cleanup = clients.clone();
     let client_id_for_cleanup = client_id.clone();
-    let lifecycle_for_cleanup = lifecycle_handlers.clone();
 
     // Ensure client is removed when connection is closed
     let _cleanup = scopeguard::guard((), move |_| {
         let mut clients_map = clients_for_cleanup.lock().unwrap();
         if clients_map.remove(&client_id_for_cleanup).is_some() {
             tracing::info!("WebSocket client disconnected: {}", client_id_for_cleanup);
-
-            // Notify client disconnected lifecycle event
-            let handlers = lifecycle_for_cleanup.lock().unwrap();
-            for handler in handlers.iter() {
-                handler(LifecycleEvent::ClientDisconnected(client_id_for_cleanup.clone()));
-            }
         }
     });
 

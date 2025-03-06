@@ -183,10 +183,38 @@ impl Error {
     }
 
     /// Create an error response payload from this error
-    pub fn to_response_payload(&self, id: i32) -> crate::messages::Response {
+    pub fn to_response_payload(&self, id: i32) -> crate::types::protocol::Response {
         let code = self.to_code();
         let message = self.to_string();
 
-        crate::messages::error_response(id, code, &message, None)
+        crate::types::protocol::error_response(id, code, &message, None)
+    }
+}
+
+// Manual implementation of Clone that handles non-cloneable types
+impl Clone for Error {
+    fn clone(&self) -> Self {
+        match self {
+            Error::Json(e) => Error::Transport(format!("JSON error: {}", e)),
+            Error::Io(e) => Error::Transport(format!("I/O error: {}", e)),
+            Error::Transport(s) => Error::Transport(s.clone()),
+            Error::Protocol(s) => Error::Protocol(s.clone()),
+            Error::MethodNotFound(s) => Error::MethodNotFound(s.clone()),
+            Error::InvalidParams(s) => Error::InvalidParams(s.clone()),
+            Error::Resource(s) => Error::Resource(s.clone()),
+            Error::Tool(s) => Error::Tool(s.clone()),
+            Error::Prompt(s) => Error::Prompt(s.clone()),
+            Error::Validation(s) => Error::Validation(s.clone()),
+            Error::SchemaValidation(s) => Error::SchemaValidation(s.clone()),
+            Error::VersionIncompatibility(s) => Error::VersionIncompatibility(s.clone()),
+            Error::Authentication(s) => Error::Authentication(s.clone()),
+            Error::Authorization(s) => Error::Authorization(s.clone()),
+            Error::RateLimit(s) => Error::RateLimit(s.clone()),
+            Error::Timeout(s) => Error::Timeout(s.clone()),
+            Error::Initialization(s) => Error::Initialization(s.clone()),
+            Error::ServerUnavailable(s) => Error::ServerUnavailable(s.clone()),
+            Error::InvalidState(s) => Error::InvalidState(s.clone()),
+            Error::Other(s) => Error::Other(s.clone()),
+        }
     }
 }

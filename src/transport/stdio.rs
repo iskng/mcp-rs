@@ -4,19 +4,18 @@
 //! communication via standard input and output streams. It is particularly useful
 //! for local subprocess communication in CLI-based MCP servers.
 
+use std::sync::Arc;
+
 use crate::errors::Error;
-use crate::messages::Message;
-use crate::transport::Transport;
-use crate::lifecycle::{ LifecycleEvent, LifecycleManager };
+use crate::types::protocol::Message;
+use crate::transport::{ Transport, TransportMessageHandler };
 use async_trait::async_trait;
 use std::collections::HashMap;
+use tokio::io::{ AsyncBufReadExt, AsyncWriteExt };
+use tracing;
 use std::process::Stdio;
-use std::time::Duration;
-use tokio::io::{ self, AsyncBufReadExt, AsyncWriteExt, BufReader, Stdin, Stdout };
 use tokio::process;
 use tokio::sync::mpsc;
-use tracing;
-use std::sync::Arc;
 
 /// Channels used for process communication
 struct StdioChannels {
@@ -25,8 +24,10 @@ struct StdioChannels {
     /// Sender for outgoing messages
     outgoing_tx: mpsc::Sender<Message>,
     /// Task handle for reader
+    #[allow(dead_code)]
     reader_task: tokio::task::JoinHandle<()>,
     /// Task handle for writer
+    #[allow(dead_code)]
     writer_task: tokio::task::JoinHandle<()>,
 }
 
@@ -50,44 +51,33 @@ pub struct StdioTransport {
     /// Is the transport connected
     connected: bool,
 
-    /// Lifecycle event handlers
-    lifecycle_handlers: Vec<Box<dyn Fn(LifecycleEvent) + Send + Sync>>,
-
-    /// Process exit timeout
-    exit_timeout: Duration,
-
     /// Standard input for direct I/O mode
-    stdin: Option<Stdin>,
+    stdin: Option<tokio::io::Stdin>,
 
     /// Standard output for direct I/O mode
-    stdout: Option<Stdout>,
+    stdout: Option<tokio::io::Stdout>,
 
     /// Buffered reader for stdin
-    reader: Option<BufReader<Stdin>>,
+    reader: Option<tokio::io::BufReader<tokio::io::Stdin>>,
 
-    /// Lifecycle manager for handling lifecycle events
-    lifecycle_manager: Arc<LifecycleManager>,
+    /// Message handler (if registered)
+    message_handler: Option<Arc<dyn TransportMessageHandler + Send + Sync>>,
 }
 
 impl StdioTransport {
     /// Create a new STDIO transport
     pub fn new() -> Self {
-        let stdin = io::stdin();
-        let stdout = io::stdout();
-
         Self {
             process: None,
             command: String::new(),
             args: Vec::new(),
             env: None,
             channels: None,
-            connected: true,
-            lifecycle_handlers: Vec::new(),
-            exit_timeout: Duration::from_secs(5),
-            stdin: Some(stdin),
-            stdout: Some(stdout),
-            reader: Some(BufReader::new(io::stdin())),
-            lifecycle_manager: Arc::new(LifecycleManager::new()),
+            connected: false,
+            stdin: None,
+            stdout: None,
+            reader: None,
+            message_handler: None,
         }
     }
 
@@ -149,16 +139,11 @@ impl StdioTransport {
         Ok(())
     }
 
-    /// Send a lifecycle event notification
-    fn notify_lifecycle(&self, event: LifecycleEvent) {
-        // Clone the event before passing it to the lifecycle manager
-        let event_clone = event.clone();
-        self.lifecycle_manager.notify_event(event_clone);
-
-        // Also notify the legacy handlers
-        for handler in &self.lifecycle_handlers {
-            handler(event.clone());
-        }
+    /// Register a message handler
+    pub fn register_message_handler<H>(&mut self, handler: H)
+        where H: TransportMessageHandler + Send + Sync + 'static
+    {
+        self.message_handler = Some(Arc::new(handler));
     }
 }
 
@@ -167,7 +152,7 @@ async fn stdio_reader(
     stdout: process::ChildStdout,
     tx: mpsc::Sender<Result<Message, Error>>
 ) -> () {
-    let mut reader = BufReader::new(stdout);
+    let mut reader = tokio::io::BufReader::new(stdout);
     let mut line = String::new();
 
     loop {
@@ -181,14 +166,10 @@ async fn stdio_reader(
                 // Parse the JSON message
                 match serde_json::from_str::<Message>(&line) {
                     Ok(message) => {
-                        if tx.send(Ok(message)).await.is_err() {
-                            break;
-                        }
+                        let _ = tx.send(Ok(message)).await;
                     }
                     Err(e) => {
-                        if tx.send(Err(Error::Json(e))).await.is_err() {
-                            break;
-                        }
+                        let _ = tx.send(Err(Error::Json(e))).await;
                     }
                 }
             }
@@ -237,9 +218,13 @@ impl Transport for StdioTransport {
         if !self.command.is_empty() {
             self.start_process().await?;
         } else {
-            // Otherwise just mark as connected and use stdin/stdout directly
+            // Otherwise just use stdin/stdout directly
+            if self.stdin.is_none() {
+                self.stdin = Some(tokio::io::stdin());
+                self.stdout = Some(tokio::io::stdout());
+                self.reader = Some(tokio::io::BufReader::new(tokio::io::stdin()));
+            }
             self.connected = true;
-            tracing::info!("STDIO transport ready (direct I/O mode)");
         }
 
         Ok(())
@@ -298,7 +283,7 @@ impl Transport for StdioTransport {
                 .send(message.clone()).await
                 .map_err(|_| Error::Transport("Failed to send message".to_string()))?;
         } else if let Some(stdout) = &mut self.stdout {
-            // Write directly to stdout
+            // Write directly to stdout using tokio async operations
             stdout.write_all(json.as_bytes()).await.map_err(Error::Io)?;
             stdout.write_all(b"\n").await.map_err(Error::Io)?;
             stdout.flush().await.map_err(Error::Io)?;
@@ -319,84 +304,40 @@ impl Transport for StdioTransport {
     }
 
     async fn close(&mut self) -> Result<(), Error> {
-        if !self.connected {
-            return Ok(());
+        // First drop the channels if they exist, which will signal the tasks to shut down
+        if let Some(channels) = self.channels.take() {
+            // Abort reader and writer tasks
+            channels.reader_task.abort();
+            channels.writer_task.abort();
         }
 
-        // Notify closing
-        tracing::info!("STDIO transport closing");
-
-        // Take channels
-        let channels = self.channels.take();
-
-        // Close channels if they exist
-        if let Some(channels) = channels {
-            // Close outgoing channel
-            drop(channels.outgoing_tx);
-
-            // Wait for writer task to complete
-            if let Err(e) = channels.writer_task.await {
-                tracing::error!("Error joining writer task: {}", e);
-            }
-        }
-
-        // Take the process
-        let mut process = self.process.take();
-
-        // Try graceful shutdown first
-        if let Some(ref mut child) = process {
-            // Terminate process
-            tracing::debug!("Terminating child process");
-
-            #[cfg(unix)]
-            {
-                if let Err(e) = child.kill().await {
-                    tracing::error!("Error killing process: {}", e);
-                }
-            }
-
-            #[cfg(windows)]
-            {
-                if let Err(e) = child.kill().await {
-                    tracing::error!("Error killing process: {}", e);
-                }
-            }
-
-            // Wait for process to exit
-            match tokio::time::timeout(self.exit_timeout, child.wait()).await {
-                Ok(Ok(_)) => {
-                    tracing::debug!("Child process exited successfully");
-                }
-                Ok(Err(e)) => {
-                    tracing::error!("Error waiting for child process: {}", e);
-                }
-                Err(_) => {
-                    tracing::error!("Timeout waiting for child process to exit");
-
-                    // Force kill
-                    #[cfg(unix)]
-                    {
-                        if let Err(e) = child.kill().await {
-                            tracing::error!("Error force killing process: {}", e);
-                        }
-                    }
-
-                    #[cfg(windows)]
-                    {
-                        if let Err(e) = child.kill().await {
-                            tracing::error!("Error force killing process: {}", e);
-                        }
-                    }
-                }
+        // Close child process if any
+        if let Some(mut child) = self.process.take() {
+            // Kill the process
+            if let Err(e) = child.kill().await {
+                tracing::warn!("Failed to kill child process: {}", e);
             }
         }
 
         self.connected = false;
-
-        // Notify closed
         tracing::info!("STDIO transport closed");
-
         Ok(())
+    }
+}
+
+#[async_trait::async_trait]
+impl TransportMessageHandler for StdioTransport {
+    async fn handle_message(
+        &self,
+        client_id: &str,
+        message: &Message
+    ) -> Result<Option<Message>, Error> {
+        if let Some(handler) = &self.message_handler {
+            // Forward to the registered handler
+            handler.handle_message(client_id, message).await
+        } else {
+            Err(Error::Transport("No message handler registered".to_string()))
+        }
     }
 }
 

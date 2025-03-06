@@ -6,14 +6,31 @@
 
 pub mod initialize;
 pub mod prompts;
+pub mod protocol;
 pub mod resources;
 pub mod tools;
 
 // Re-export common types from each module
 pub use initialize::{
-    ClientCapabilities, Implementation, InitializeRequestParams, InitializeResult,
+    ClientCapabilities,
+    Implementation,
+    InitializeRequestParams,
+    InitializeResult,
     ServerCapabilities,
 };
-pub use prompts::{ContentPart, Message, Prompt, PromptArgument, Role};
-pub use resources::{ListResourcesParams, ListResourcesResult, Resource};
-pub use tools::{CallToolParams, CallToolResult, Tool, ToolParameter};
+pub use prompts::{ ContentPart, Message as PromptMessage, Prompt, PromptArgument, Role };
+pub use protocol::{
+    Message as ProtocolMessage,
+    Request,
+    Response,
+    Notification,
+    ResponseOutcome,
+    ErrorData,
+    NotificationMessage,
+    RequestMessage,
+    ResponseMessage,
+    success_response,
+    error_response,
+};
+pub use resources::{ ListResourcesParams, ListResourcesResult, Resource };
+pub use tools::{ CallToolParams, CallToolResult, Tool, ToolParameter };

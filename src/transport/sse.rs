@@ -13,17 +13,11 @@ use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 use tokio::sync::{ Mutex, mpsc, oneshot };
 use url::Url;
-use futures::future::{ self, Either };
-use serde_json::Value;
-use log::{ info, debug, warn, error };
-use tokio::sync::Mutex as AsyncMutex;
-use futures::future::poll_fn;
-use url::form_urlencoded;
+use log::{ info, error };
 
 use crate::errors::Error;
-use crate::messages::Message;
+use crate::types::protocol::Message;
 use crate::transport::Transport;
-use crate::lifecycle::{ LifecycleEvent, LifecycleManager };
 
 /// Default timeout for HTTP requests
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -83,8 +77,6 @@ pub struct SseTransport {
     is_ready: Arc<AtomicBool>,
     /// Handle to the background task
     _task_handle: tokio::task::JoinHandle<()>,
-    /// Lifecycle manager for handling lifecycle events
-    lifecycle_manager: Arc<crate::lifecycle::LifecycleManager>,
     /// Shutdown signal sender
     shutdown_tx: Option<oneshot::Sender<()>>,
 }
@@ -134,9 +126,6 @@ impl SseTransport {
         // Create the is_ready flag
         let is_ready = Arc::new(AtomicBool::new(false));
 
-        // Create the lifecycle manager
-        let lifecycle_manager = Arc::new(crate::lifecycle::LifecycleManager::new());
-
         // Create a shutdown signal
         let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
 
@@ -147,7 +136,6 @@ impl SseTransport {
         let connected_clone = connected.clone();
         let is_ready_clone = is_ready.clone();
         let http_client_clone = http_client.clone();
-        let lifecycle_manager_clone = lifecycle_manager.clone();
         let messages_url_clone = messages_url.clone();
 
         // Spawn a task to handle the SSE connection
@@ -172,8 +160,7 @@ impl SseTransport {
                         session_id_clone.clone(),
                         connected_clone.clone(),
                         is_ready_clone.clone(),
-                        messages_url_clone.clone(),
-                        lifecycle_manager_clone.clone()
+                        messages_url_clone.clone()
                     ).await
                 {
                     Ok(_) => {
@@ -213,24 +200,8 @@ impl SseTransport {
             connected,
             is_ready,
             _task_handle: task_handle,
-            lifecycle_manager,
             shutdown_tx: Some(shutdown_tx),
         })
-    }
-
-    /// Register a lifecycle handler
-    pub fn register_lifecycle_handler<F>(&self, handler: F)
-        where F: Fn(LifecycleEvent) + Send + Sync + 'static
-    {
-        self.lifecycle_manager.register_event_handler(handler);
-    }
-
-    /// Notify lifecycle events
-    async fn notify_lifecycle_event(
-        lifecycle_manager: &Arc<crate::lifecycle::LifecycleManager>,
-        event: LifecycleEvent
-    ) {
-        lifecycle_manager.notify_event(event);
     }
 
     /// Connect to the SSE endpoint and process messages
@@ -241,15 +212,11 @@ impl SseTransport {
         session_id: Arc<Mutex<String>>,
         connected: Arc<Mutex<bool>>,
         is_ready: Arc<AtomicBool>,
-        messages_url: String,
-        lifecycle_manager: Arc<crate::lifecycle::LifecycleManager>
+        _messages_url: String
     ) -> Result<(), Error> {
         let mut retries = 0;
         let max_retries = 5;
         let mut retry_delay = std::time::Duration::from_millis(1000);
-
-        // Store a clone of messages_url for later use
-        let messages_url_clone = messages_url.clone();
 
         loop {
             tracing::info!("Connecting to SSE endpoint: {}", events_url);

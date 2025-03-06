@@ -1,9 +1,10 @@
 use crate::errors::Error;
-use crate::tools::process_manager::ToolProcessManager;
+use crate::server::tools::process_manager::ToolProcessManager;
 use crate::types::tools::{ Tool, CallToolParams, CallToolResult, TextContent };
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{ Mutex, mpsc };
+use tracing::info;
 
 use super::process_manager::ToolOutput;
 
@@ -50,7 +51,7 @@ impl ToolRegistry {
     }
 
     /// Register a tool in the registry
-    pub async fn register_tool(
+    pub async fn register_external_tool(
         &self,
         tool: Tool,
         command: String,
@@ -84,28 +85,9 @@ impl ToolRegistry {
         Ok(())
     }
 
-    /// Register an external tool that executes as a subprocess
-    ///
-    /// This is a convenience method that can be called directly instead of
-    /// going through the Server.
-    pub async fn register_external_tool(
-        &self,
-        tool: Tool,
-        command: String,
-        args: Vec<String>,
-        env: HashMap<String, String>
-    ) -> Result<(), Error> {
-        println!(
-            "DEBUG: Registering external tool directly in ToolRegistry: {} with command: {}",
-            tool.name,
-            command
-        );
-        self.register_tool(tool, command, args, env).await
-    }
-
     pub async fn list_tools(&self) -> Vec<Tool> {
         let tools = self.tools.lock().await;
-        println!(
+        info!(
             "LISTING TOOLS CALLED: Available tools in registry: {}",
             tools.keys().cloned().collect::<Vec<String>>().join(", ")
         );
@@ -261,7 +243,7 @@ impl ToolRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::tools::{ Tool, ToolBuilder, ToolParameterType };
+    use crate::types::tools::{ ToolBuilder, ToolParameterType };
 
     #[tokio::test]
     async fn test_in_process_tool() {

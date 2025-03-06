@@ -9,17 +9,14 @@
 // Re-export core components
 pub mod client;
 pub mod errors;
-pub mod lifecycle;
-pub mod messages;
 pub mod server;
-pub mod server_session;
-pub mod tools;
+// pub mod server_session;
+
 pub mod transport;
 pub mod types;
 pub mod utils;
 // Re-export commonly used items
 pub use errors::Error;
-pub use lifecycle::LifecycleManager;
 pub use transport::Transport;
-pub use transport::sse::SseTransport;
+pub use transport::sse_server::SseServerTransport;
 pub use transport::stdio::StdioTransport;

@@ -13,12 +13,12 @@ use tokio::sync::{ Mutex, mpsc };
 use tokio::task::JoinHandle;
 
 use crate::errors::Error;
-use crate::messages::{
-    GenericRequest,
+use crate::types::protocol::{
     Message as McpMessage,
     Notification,
     Response,
     ResponseOutcome,
+    Request,
 };
 use crate::transport::Transport;
 use crate::types::initialize::{ InitializeRequestParams, InitializeResult };
@@ -203,9 +203,9 @@ impl<T: Transport + 'static> Client<T> {
         let id = self.request_id_counter.fetch_add(1, Ordering::SeqCst);
         tracing::debug!("Preparing request id={} for method={}", id, method);
 
-        let request = GenericRequest {
+        let request = Request {
             jsonrpc: "2.0".to_string(),
-            id: Some(id),
+            id,
             method: method.to_string(),
             params: Some(serde_json::to_value(params).map_err(Error::Json)?),
         };
@@ -746,7 +746,7 @@ impl<T: Transport + 'static> ClientSession<T> {
 mod tests {
     use super::*;
     use crate::errors::error_codes;
-    use crate::messages::error_response;
+    use crate::types::protocol::error_response;
     use async_trait::async_trait;
     use std::sync::atomic::{ AtomicBool, Ordering };
 
