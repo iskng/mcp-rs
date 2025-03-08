@@ -5,31 +5,32 @@
 //! - Accepts HTTP POST requests from clients at the `/message` endpoint
 //! - Routes messages between clients and the MCP server
 
-use crate::errors::Error;
-use crate::types::protocol::Message;
-use crate::transport::connection_manager::ConnectionManager;
-pub use crate::transport::connection_manager::MessageEventHandler;
+use crate::protocol::{ JSONRPCMessage, JSONRPCMessage as Message, errors::Error };
+use crate::server::handlers::RouteHandler;
+use crate::transport::{ Transport };
+use crate::transport::middleware::{ ClientSession, ClientSessionLayer, ClientSessionStore };
+use async_trait::async_trait;
 use async_stream;
 
-use axum::{
-    Router,
-    extract::{ Query, State },
-    http::StatusCode,
-    response::{ IntoResponse, Sse, sse::Event },
-    routing::{ get, post },
-};
-
-use http::Method;
-use serde_json;
-use std::collections::HashMap;
 use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::{ Duration, SystemTime };
-use tokio::sync::mpsc;
+use std::time::Duration;
+
+use axum::{
+    body::Body,
+    extract::{ Extension, Query, State },
+    http::{ Request, StatusCode },
+    middleware::Next,
+    response::{ sse::{ Event, KeepAlive, Sse }, IntoResponse },
+    routing::{ get, post },
+    Router,
+};
+use tower::ServiceBuilder;
 use tower_http::cors::{ Any, CorsLayer };
+use tokio::sync::mpsc;
 use uuid;
-use crate::transport::TransportMessageHandler;
+use tokio::sync::RwLock;
 
 /// Configuration options for the SSE server
 #[derive(Debug, Clone)]
@@ -80,14 +81,13 @@ pub enum ConnectionEvent {
 /// Type for connection event handlers
 pub type ConnectionEventHandler = Box<dyn Fn(ConnectionEvent) + Send + Sync + 'static>;
 
-/// Message processing event types for the event-based architecture
-#[derive(Debug, Clone)]
+/// Message event types
 pub enum MessageEvent {
     /// A new message was received from a client
-    MessageReceived(Option<String>, Message),
+    MessageReceived(Option<String>, serde_json::Value),
 
     /// A message was sent to a client
-    MessageSent(String, Message),
+    MessageSent(String, serde_json::Value),
 
     /// A message processing error occurred
     MessageError(Option<String>, Error),
@@ -95,9 +95,6 @@ pub enum MessageEvent {
 
 /// Application state for the SSE server
 struct AppState {
-    /// Connection manager
-    connection_manager: Arc<ConnectionManager>,
-
     /// Authentication token (if required)
     auth_token: Option<String>,
 
@@ -107,24 +104,32 @@ struct AppState {
     /// Allowed origins for CORS
     allowed_origins: Option<Vec<String>>,
 
-    /// Server reference for direct handler calls
-    server: Option<Arc<dyn TransportMessageHandler + Send + Sync>>,
+    /// Server handler for processing messages
+    route_handler: Option<Arc<dyn RouteHandler + Send + Sync>>,
+
+    /// Client session store
+    session_store: Arc<ClientSessionStore>,
 }
 
 impl AppState {
     fn new(
-        connection_manager: Arc<ConnectionManager>,
         auth_token: Option<String>,
         require_auth: bool,
         allowed_origins: Option<Vec<String>>
     ) -> Self {
         Self {
-            connection_manager,
             auth_token,
             require_auth,
             allowed_origins,
-            server: None,
+            route_handler: None,
+            session_store: Arc::new(ClientSessionStore::new()),
         }
+    }
+
+    /// Set server handler
+    fn with_route_handler(mut self, handler: Arc<dyn RouteHandler + Send + Sync>) -> Self {
+        self.route_handler = Some(handler);
+        self
     }
 }
 
@@ -133,182 +138,121 @@ fn transport_error<S: Into<String>>(message: S) -> Error {
     Error::Transport(message.into())
 }
 
-/// Server-side implementation of the SSE transport
-#[derive(Clone)]
+/// SSE server transport implementation
 pub struct SseServerTransport {
     /// Options for SSE server
     options: SseServerOptions,
 
-    /// Connection manager
-    connection_manager: Arc<ConnectionManager>,
-
     /// Server socket address
     server_addr: Option<SocketAddr>,
 
-    /// Application state
-    app_state: Arc<tokio::sync::RwLock<Option<Arc<AppState>>>>,
-
-    /// Message handler (if registered)
-    message_handler: Option<Arc<dyn TransportMessageHandler + Send + Sync>>,
+    /// Application state shared with server
+    app_state: Arc<RwLock<Option<Arc<crate::server::server::AppState>>>>,
 
     /// Server task handle
-    server_handle: Arc<tokio::sync::RwLock<Option<tokio::task::JoinHandle<Result<(), Error>>>>>,
+    server_handle: Arc<RwLock<Option<tokio::task::JoinHandle<Result<(), Error>>>>>,
 }
 
 impl SseServerTransport {
-    /// Create a new SSE server transport with the given options
+    /// Create a new SSE server transport with default options
     pub fn new(options: SseServerOptions) -> Self {
-        let connection_timeout = options.connection_timeout;
         Self {
-            options: options.clone(),
-            connection_manager: Arc::new(ConnectionManager::new(connection_timeout)),
+            options,
             server_addr: None,
-            app_state: Arc::new(tokio::sync::RwLock::new(None)),
-            message_handler: None,
-            server_handle: Arc::new(tokio::sync::RwLock::new(None)),
+            app_state: Arc::new(RwLock::new(None)),
+            server_handle: Arc::new(RwLock::new(None)),
         }
     }
 
+    /// Create a new SSE server transport with app_state
+    pub fn with_app_state(
+        options: SseServerOptions,
+        app_state: Arc<crate::server::server::AppState>
+    ) -> Self {
+        let transport = Self::new(options);
+        // Initialize the app_state immediately
+        tokio::spawn({
+            let app_state_lock = transport.app_state.clone();
+            let app_state = app_state.clone();
+            async move {
+                let mut guard = app_state_lock.write().await;
+                *guard = Some(app_state);
+                tracing::info!("Initialized SseServerTransport with app_state");
+            }
+        });
+        transport
+    }
+
     /// Get the current app state
-    async fn get_app_state(&self) -> Option<Arc<AppState>> {
+    async fn get_app_state(&self) -> Option<Arc<crate::server::server::AppState>> {
         let guard = self.app_state.read().await;
         guard.clone()
     }
 
-    /// Set the app state
-    async fn set_app_state(&self, state: Arc<AppState>) {
-        let mut guard = self.app_state.write().await;
-        *guard = Some(state);
-    }
-
-    /// Register message handler
-    pub fn register_message_handler<H>(&mut self, handler: H)
-        where H: TransportMessageHandler + Send + Sync + 'static
-    {
-        self.message_handler = Some(Arc::new(handler));
-    }
-
-    /// Register server message handler
-    pub async fn configure_server(
-        &mut self,
-        server: Arc<dyn TransportMessageHandler + Send + Sync>
-    ) {
-        tracing::info!("Configuring server handler");
-
-        // Store it for direct access
-        self.message_handler = Some(server.clone());
-
-        // Update app state if it exists, or create it if it doesn't
-        if let Some(app_state) = self.get_app_state().await {
-            // Create a new AppState with the server included
-            let new_app_state = Arc::new(AppState {
-                connection_manager: app_state.connection_manager.clone(),
-                auth_token: app_state.auth_token.clone(),
-                require_auth: app_state.require_auth,
-                allowed_origins: app_state.allowed_origins.clone(),
-                server: Some(server),
-            });
-
-            // Replace the old app state
-            self.set_app_state(new_app_state).await;
-        } else {
-            // Create a new AppState
-            let new_app_state = Arc::new(
-                AppState::new(
-                    self.connection_manager.clone(),
-                    self.options.auth_token.clone(),
-                    self.options.require_auth,
-                    self.options.allowed_origins.clone()
-                )
-            );
-
-            // Update the AppState with the server
-            let app_state_with_server = Arc::new(AppState {
-                connection_manager: new_app_state.connection_manager.clone(),
-                auth_token: new_app_state.auth_token.clone(),
-                require_auth: new_app_state.require_auth,
-                allowed_origins: new_app_state.allowed_origins.clone(),
-                server: Some(server),
-            });
-
-            // Set the new app state
-            self.set_app_state(app_state_with_server).await;
-            tracing::info!("Created new AppState during server configuration");
-        }
-    }
-
-    /// Start the SSE server transport
+    /// Start the SSE server
     pub async fn start(&mut self) -> Result<(), Error> {
-        if self.server_handle.read().await.is_some() {
-            // Already started
-            tracing::warn!("SSE server already started");
-            return Ok(());
-        }
+        // Check if we have app state
+        let app_state = match self.get_app_state().await {
+            Some(state) => state,
+            None => {
+                return Err(Error::Protocol("No app state available for transport".to_string()));
+            }
+        };
 
+        // Extract the route handler from app state
+        let route_handler = app_state.route_handler.clone();
+
+        tracing::info!("Starting SSE server with route handler from app state");
+
+        // Parse server address
         let addr_str = self.options.bind_address.clone();
-        let addr = addr_str.parse::<SocketAddr>().map_err(|e| {
-            tracing::error!("Failed to parse bind address: {}", e);
-            transport_error(format!("Invalid bind address: {}", e))
-        })?;
+        let addr: SocketAddr = addr_str
+            .parse()
+            .map_err(|e| transport_error(format!("Invalid bind address '{}': {}", addr_str, e)))?;
 
-        self.server_addr = Some(addr);
-
-        // Create a new connection manager
-        let connection_manager = self.connection_manager.clone();
-
-        // Get message handler
-        let message_handler = self.message_handler.clone();
-
-        // Create app state
-        let app_state = Arc::new(AppState {
-            connection_manager: connection_manager.clone(),
-            auth_token: self.options.auth_token.clone(),
-            require_auth: self.options.require_auth,
-            allowed_origins: self.options.allowed_origins.clone(),
-            server: message_handler,
-        });
-
-        tracing::debug!("Created new AppState for server start");
-
-        // Update the app state
-        self.set_app_state(app_state.clone()).await;
-
-        let cors = CorsLayer::new()
-            .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
-            .allow_headers(Any)
-            .allow_origin(Any);
+        // Get the session store from app state
+        let session_store = app_state.session_store.clone();
+        tracing::info!("Configuring SSE router with session store from app state");
 
         let app = Router::new()
+            .route("/", get(handle_status))
             .route("/sse", get(handle_sse_connection))
             .route("/message", post(handle_client_message))
-            .layer(cors)
-            .with_state(app_state);
+            .with_state(app_state)
+            // Add the store as an extension first
+            .layer(Extension(session_store.clone()))
+            // Add the session layer that will extract sessions from query params
+            .layer(ClientSessionLayer::with_store(session_store))
+            // Add CORS support
+            .layer(CorsLayer::new().allow_origin(Any).allow_methods(Any).allow_headers(Any));
 
+        // Start the server
         let server_addr = addr.clone();
         let server_handle = tokio::spawn(async move {
-            tracing::info!("Starting SSE server on {}", addr_str);
+            tracing::info!("Starting SSE server on {}", addr);
             let listener = tokio::net::TcpListener
-                ::bind(server_addr).await
-                .map_err(|e| {
-                    transport_error(format!("Failed to bind to {}: {}", server_addr, e))
-                })?;
+                ::bind(addr).await
+                .map_err(|e| transport_error(format!("Failed to bind to {}: {}", addr, e)))?;
 
-            axum
-                ::serve(listener, app.into_make_service()).await
-                .map_err(|e| { transport_error(format!("Server error: {}", e)) })?;
-
-            Ok(())
+            axum::serve(listener, app.into_make_service()).await.map_err(|e|
+                transport_error(format!("Server error: {}", e))
+            )
         });
 
-        let mut handle = self.server_handle.write().await;
-        *handle = Some(server_handle);
+        // Store server information
+        self.server_addr = Some(server_addr);
+        {
+            let mut server_handle_guard = self.server_handle.write().await;
+            *server_handle_guard = Some(server_handle);
+        }
 
+        tracing::info!("SSE server started on {}", addr_str);
         Ok(())
     }
 
-    /// Close the transport
+    /// Close the SSE server
     pub async fn close(&mut self) -> Result<(), Error> {
-        tracing::info!("Closing SSE server transport");
+        tracing::info!("Shutting down SSE server transport");
 
         // Abort the server task if it exists
         let server_handle_opt = {
@@ -320,116 +264,250 @@ impl SseServerTransport {
             handle.abort();
         }
 
-        // Shutdown the connection manager
-        self.connection_manager.shutdown().await?;
-
         tracing::info!("SSE server transport closed");
 
         Ok(())
     }
 }
 
+#[async_trait]
+impl Transport for SseServerTransport {
+    async fn start(&mut self) -> Result<(), Error> {
+        // Call the SseServerTransport's start method
+        SseServerTransport::start(self).await
+    }
+
+    async fn close(&mut self) -> Result<(), Error> {
+        // Call the SseServerTransport's close method
+        SseServerTransport::close(self).await
+    }
+
+    async fn is_connected(&self) -> bool {
+        // Consider the SSE transport connected if it has a server handle
+        let handle_guard = self.server_handle.read().await;
+        handle_guard.is_some()
+    }
+
+    async fn send_to(&mut self, client_id: &str, message: &JSONRPCMessage) -> Result<(), Error> {
+        // Get the app state to access the session store
+        let app_state = match self.get_app_state().await {
+            Some(state) => state,
+            None => {
+                return Err(Error::Protocol("No app state available".to_string()));
+            }
+        };
+
+        // Find the session by client ID using the store from app state
+        if let Some(session) = app_state.session_store.find_session_by_client_id(client_id).await {
+            // Serialize the message to JSON
+            let json = serde_json
+                ::to_string(message)
+                .map_err(|e| Error::Protocol(format!("Failed to serialize message: {}", e)))?;
+
+            // Send the message to the client
+            session
+                .send_message(json).await
+                .map_err(|e|
+                    Error::Protocol(
+                        format!("Failed to send message to client {}: {}", client_id, e)
+                    )
+                )?;
+
+            tracing::debug!("Message sent to client {}", client_id);
+            Ok(())
+        } else {
+            Err(Error::Protocol(format!("Client with ID {} not found", client_id)))
+        }
+    }
+    /// Set the app state
+    /// fn set_app_state(&mut self, app_state: Arc<AppState>);
+    async fn set_app_state(&mut self, state: Arc<crate::server::server::AppState>) {
+        let mut guard = self.app_state.write().await;
+        *guard = Some(state);
+    }
+}
+
 /// Handle an SSE connection
-async fn handle_sse_connection(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    // Generate client ID and session ID
-    let client_id = uuid::Uuid::new_v4().to_string();
+async fn handle_sse_connection(
+    Extension(store): Extension<Arc<ClientSessionStore>>,
+    State(state): State<Arc<crate::server::server::AppState>>
+) -> impl IntoResponse {
+    // Generate session ID
     let session_id = uuid::Uuid::new_v4().to_string();
 
-    tracing::info!("New SSE connection: client_id = {client_id}, session_id = {session_id}");
+    // Add more detailed logging
+    tracing::info!("New SSE connection established! session_id = {}", session_id);
 
     // Create the session-specific message endpoint URI
     let session_uri = format!("/message?session_id={}", session_id);
 
-    // Register client with connection manager
-    let client = state.connection_manager.register_client(client_id.clone(), session_id.clone());
+    // Get or create a session using the supplied store
+    let mut session = store.get_or_create_session(Some(session_id.clone())).await;
+    tracing::info!("Created and stored new session: {}", session_id);
 
     // Create the SSE stream
     let stream =
         async_stream::stream! {
+        // Send the endpoint URL as the first event
         let endpoint_event = Event::default().event("endpoint").data(session_uri.clone());
         yield Ok::<_, Infallible>(endpoint_event);
+        tracing::debug!("Sent endpoint event for session: {}", session_id);
 
         let keep_alive_interval = Duration::from_secs(30);
         let mut interval = tokio::time::interval(keep_alive_interval);
-        let mut message_rx = client.message_sender.subscribe();
+
+        // Create a new channel for this session
+        let (tx, mut rx) = tokio::sync::mpsc::channel(100);
+
+        // Set the message sender in the session
+        session.set_message_sender(tx);
+        store.store_session(session).await;
+        tracing::debug!("Stored session with sender: {}", session_id);
+
+        // Send a welcome message to indicate successful connection
+        yield Ok::<_, Infallible>(Event::default().event("connected").data("Connection established"));
 
         loop {
             tokio::select! {
-                msg = message_rx.recv() => {
-                    match msg {
-                        Ok(message) => {
-                            let json_data = serde_json::to_string(&message).unwrap_or_else(|e| format!("{{\"error\":\"Serialization error: {}\"}}", e));
-                            let event = Event::default().event("message").data(json_data);
-                            yield Ok::<_, Infallible>(event);
-                        }
-                        Err(e) => {
-                            tracing::error!("Error receiving client message: {}", e);
-                            break;
-                        }
+                msg = rx.recv() => {
+                    if let Some(message) = msg {
+                        tracing::trace!("Sending message to client: {}", session_id);
+                        yield Ok::<_, Infallible>(Event::default().data(message));
+                    } else {
+                        // Channel closed, end the stream
+                        tracing::debug!("Channel closed for session: {}", session_id);
+                        break;
                     }
                 }
                 _ = interval.tick() => {
-                    let event = Event::default().event("keep-alive").data(format!("{{\"time\":{}}}", SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default().as_secs()));
-                    yield Ok::<_, Infallible>(event);
-                    state.connection_manager.update_client_activity(&client_id);
+                    // Send keep-alive event
+                    tracing::trace!("Sending keep-alive to: {}", session_id);
+                    yield Ok::<_, Infallible>(Event::default().event("keep-alive").data(""));
                 }
             }
+        }
+
+        // Clean up the session when the connection is closed
+        if let Some(_) = store.remove_session(&session_id).await {
+            tracing::debug!("Removed session: {}", session_id);
+        } else {
+            tracing::warn!("Session not found for removal: {}", session_id);
         }
     };
 
-    Sse::new(stream).into_response()
+    // Set Content-Type and return the stream
+    Sse::new(stream).keep_alive(
+        KeepAlive::new().interval(Duration::from_secs(30)).text("keep-alive")
+    )
 }
 
-/// Handle a message from a client
+/// Handle a client message
 async fn handle_client_message(
-    Query(params): Query<HashMap<String, String>>,
-    State(state): State<Arc<AppState>>,
+    Extension(store): Extension<Arc<ClientSessionStore>>,
+    Extension(mut session): Extension<ClientSession>,
+    State(state): State<Arc<crate::server::server::AppState>>,
     body: String
 ) -> Result<String, StatusCode> {
-    // Extract session_id from query params
-    let session_id = params.get("session_id").ok_or(StatusCode::BAD_REQUEST)?;
+    // Set up detailed error logging
+    tracing::info!(
+        "Handling client message from session: {} (client_id: {:?})",
+        session.session_id,
+        session.client_id
+    );
 
-    // Get client by session ID
-    let client = state.connection_manager
-        .get_client_by_session(session_id).await
-        .ok_or(StatusCode::UNAUTHORIZED)?;
+    // Log all request components for debugging
+    tracing::debug!("Request body: {}", body);
+    tracing::debug!(
+        "Session data: session_id={}, client_id={:?}",
+        session.session_id,
+        session.client_id
+    );
 
-    // Update activity and await the result
-    state.connection_manager.update_client_activity(&client.client_id);
-
-    let message = serde_json::from_str::<Message>(&body).map_err(|e| {
-        tracing::error!("Failed to parse message: {}", e);
-        StatusCode::BAD_REQUEST
-    })?;
-
-    // Process the message with the server handler if available
-    if let Some(server) = &state.server {
-        match server.handle_message(&client.client_id, &message).await {
-            Ok(Some(response)) => {
-                // Got a response, send it directly to the client
-                if
-                    let Some(client_obj) = state.connection_manager.get_client(
-                        &client.client_id
-                    ).await
-                {
-                    if let Err(e) = client_obj.message_sender.send(response) {
-                        tracing::error!("Failed to send response to client: {}", e);
-                    }
-                }
-            }
-            Ok(None) => {
-                // No response needed
-                tracing::debug!("No response needed for message from client {}", client.client_id);
-            }
-            Err(e) => {
-                tracing::error!("Error processing message from client {}: {}", client.client_id, e);
-            }
+    // Parse the incoming message as a JSON-RPC message
+    let message: JSONRPCMessage = match serde_json::from_str(&body) {
+        Ok(msg) => {
+            tracing::debug!("Successfully parsed JSON-RPC message: {:?}", msg);
+            msg
         }
-    } else {
-        tracing::error!("No server handler registered");
+        Err(e) => {
+            tracing::error!("Failed to parse JSON-RPC message: {}, body: {}", e, body);
+            return Err(StatusCode::BAD_REQUEST);
+        }
+    };
+
+    // Get client_id from session or generate one if not present
+    if session.client_id.is_none() {
+        // First message from this session, generate a client ID
+        let id = uuid::Uuid::new_v4().to_string();
+        session.client_id = Some(id.clone());
+        tracing::info!("Assigned client_id {} to session {}", id, session.session_id);
+
+        // Update the session in the store
+        store.store_session(session.clone()).await;
+        tracing::debug!("Updated session in store with new client_id");
     }
 
-    // Generate unique ID for acknowledgement
-    let id = uuid::Uuid::new_v4().to_string();
-    Ok(format!("{{\"id\":\"{}\"}}", id))
+    tracing::info!(
+        "Processing message from client: {:?}, session ID: {}",
+        session.client_id,
+        session.session_id
+    );
+
+    // Wrap in a closure to handle any errors the same way
+    let handle_result = state.route_handler.as_ref().handle_message(message, &session).await;
+
+    // Process the message with the handler
+    match handle_result {
+        Ok(Some(response)) => {
+            // Send the response back to the client
+            tracing::debug!("Got response from handler: {:?}", response);
+            match serde_json::to_string(&response) {
+                Ok(json) => {
+                    tracing::debug!("Serialized response: {}", json);
+                    match session.send_message(json.clone()).await {
+                        Ok(_) => {
+                            return Ok(json);
+                        }
+                        Err(e) => {
+                            tracing::error!("Failed to send message to client: {}", e);
+                            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+                        }
+                    };
+                }
+                Err(e) => {
+                    tracing::error!("Failed to serialize response: {}", e);
+
+                    // Create a proper JSON-RPC error response
+                    let error_json = format!(
+                        r#"{{"jsonrpc":"2.0","error":{{"code":-32700,"message":"Failed to serialize response: {}"}}}}"#,
+                        e.to_string().replace('"', "\\\"")
+                    );
+
+                    return Ok(error_json);
+                }
+            }
+        }
+        Ok(None) => {
+            // No response needed
+            tracing::debug!("No response needed for client");
+            return Ok("".to_string());
+        }
+        Err(e) => {
+            tracing::error!("Error processing message from client: {}", e);
+
+            // Return a more helpful error message
+            let error_json = format!(
+                r#"{{"jsonrpc":"2.0","error":{{"code":-32000,"message":"{}"}}}}"#,
+                e.to_string().replace('"', "\\\"")
+            );
+
+            return Ok(error_json);
+        }
+    }
+}
+
+// Add a simple status handler to verify the server is running
+async fn handle_status() -> impl IntoResponse {
+    tracing::info!("Status endpoint called");
+    "MCP SSE Server is running"
 }

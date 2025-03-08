@@ -6,16 +6,17 @@
 
 use std::sync::Arc;
 
-use crate::errors::Error;
-use crate::types::protocol::Message;
-use crate::transport::{ Transport, TransportMessageHandler };
+use crate::protocol::{ JSONRPCMessage as Message, errors::Error };
+use crate::server::handlers::RouteHandler;
+use crate::server::server::AppState;
+use crate::transport::{ Transport, DirectIOTransport, TransportMessageHandler };
 use async_trait::async_trait;
 use std::collections::HashMap;
-use tokio::io::{ AsyncBufReadExt, AsyncWriteExt };
-use tracing;
 use std::process::Stdio;
+use tokio::io::{ AsyncBufReadExt, AsyncReadExt, AsyncWriteExt };
 use tokio::process;
 use tokio::sync::mpsc;
+use tracing;
 
 /// Channels used for process communication
 struct StdioChannels {
@@ -61,7 +62,7 @@ pub struct StdioTransport {
     reader: Option<tokio::io::BufReader<tokio::io::Stdin>>,
 
     /// Message handler (if registered)
-    message_handler: Option<Arc<dyn TransportMessageHandler + Send + Sync>>,
+    message_handler: Option<Arc<dyn RouteHandler + Send + Sync>>,
 }
 
 impl StdioTransport {
@@ -141,9 +142,14 @@ impl StdioTransport {
 
     /// Register a message handler
     pub fn register_message_handler<H>(&mut self, handler: H)
-        where H: TransportMessageHandler + Send + Sync + 'static
+        where H: RouteHandler + Send + Sync + 'static
     {
-        self.message_handler = Some(Arc::new(handler));
+        self.set_message_handler(Arc::new(handler));
+    }
+
+    /// Set a message handler
+    fn set_message_handler(&mut self, handler: Arc<dyn RouteHandler + Send + Sync>) {
+        self.message_handler = Some(handler);
     }
 }
 
@@ -207,9 +213,7 @@ async fn stdio_writer(mut stdin: process::ChildStdin, mut rx: mpsc::Receiver<Mes
 
 #[async_trait]
 impl Transport for StdioTransport {
-    /// Start the transport - for stdio this initializes the process
     async fn start(&mut self) -> Result<(), Error> {
-        // Check if we're already started
         if self.connected {
             return Ok(());
         }
@@ -218,18 +222,56 @@ impl Transport for StdioTransport {
         if !self.command.is_empty() {
             self.start_process().await?;
         } else {
-            // Otherwise just use stdin/stdout directly
-            if self.stdin.is_none() {
-                self.stdin = Some(tokio::io::stdin());
-                self.stdout = Some(tokio::io::stdout());
-                self.reader = Some(tokio::io::BufReader::new(tokio::io::stdin()));
-            }
+            // Direct I/O mode
+            self.stdin = Some(tokio::io::stdin());
+            self.stdout = Some(tokio::io::stdout());
+            self.reader = Some(tokio::io::BufReader::new(tokio::io::stdin()));
             self.connected = true;
         }
 
         Ok(())
     }
 
+    async fn is_connected(&self) -> bool {
+        self.connected
+    }
+
+    async fn close(&mut self) -> Result<(), Error> {
+        // First drop the channels if they exist, which will signal the tasks to shut down
+        if let Some(channels) = self.channels.take() {
+            // Abort reader and writer tasks
+            channels.reader_task.abort();
+            channels.writer_task.abort();
+        }
+
+        // If we have a process, kill it
+        if let Some(mut process) = self.process.take() {
+            // Try to kill the process gracefully
+            if let Err(e) = process.kill().await {
+                tracing::warn!("Failed to kill process: {}", e);
+                // If we can't kill it, at least don't wait for it
+                return Err(
+                    Error::Io(
+                        std::io::Error::new(std::io::ErrorKind::Other, "Failed to kill process")
+                    )
+                );
+            }
+        }
+
+        self.connected = false;
+        Ok(())
+    }
+
+    async fn send_to(&mut self, _client_id: &str, message: &Message) -> Result<(), Error> {
+        // StdioTransport is single-client, so ignore client_id and just send the message
+        self.send(message).await
+    }
+
+    async fn set_app_state(&mut self, _app_state: Arc<AppState>) {}
+}
+
+#[async_trait]
+impl DirectIOTransport for StdioTransport {
     async fn receive(&mut self) -> Result<(Option<String>, Message), Error> {
         if !self.connected {
             return Err(Error::Transport("Transport is not connected".to_string()));
@@ -293,51 +335,30 @@ impl Transport for StdioTransport {
 
         Ok(())
     }
-
-    async fn send_to(&mut self, _client_id: &str, message: &Message) -> Result<(), Error> {
-        // For STDIO transport, there's only one client, so send_to behaves the same as send
-        self.send(message).await
-    }
-
-    async fn is_connected(&self) -> bool {
-        self.connected
-    }
-
-    async fn close(&mut self) -> Result<(), Error> {
-        // First drop the channels if they exist, which will signal the tasks to shut down
-        if let Some(channels) = self.channels.take() {
-            // Abort reader and writer tasks
-            channels.reader_task.abort();
-            channels.writer_task.abort();
-        }
-
-        // Close child process if any
-        if let Some(mut child) = self.process.take() {
-            // Kill the process
-            if let Err(e) = child.kill().await {
-                tracing::warn!("Failed to kill child process: {}", e);
-            }
-        }
-
-        self.connected = false;
-        tracing::info!("STDIO transport closed");
-        Ok(())
-    }
 }
 
-#[async_trait::async_trait]
-impl TransportMessageHandler for StdioTransport {
+/// Adapter to convert a RouteHandler to a TransportMessageHandler
+struct RouteHandlerAdapter {
+    server_handler: Arc<dyn RouteHandler + Send + Sync>,
+}
+
+#[async_trait]
+impl TransportMessageHandler for RouteHandlerAdapter {
     async fn handle_message(
         &self,
         client_id: &str,
         message: &Message
     ) -> Result<Option<Message>, Error> {
-        if let Some(handler) = &self.message_handler {
-            // Forward to the registered handler
-            handler.handle_message(client_id, message).await
-        } else {
-            Err(Error::Transport("No message handler registered".to_string()))
+        // Create a client session
+        let mut session = crate::transport::middleware::ClientSession::new();
+
+        // Set the client ID if provided
+        if !client_id.is_empty() {
+            session.set_client_id(client_id.to_string());
         }
+
+        // Forward to server handler
+        self.server_handler.handle_message(message.clone(), &session).await
     }
 }
 

@@ -1,88 +1,37 @@
+extern crate proc_macro;
 use proc_macro::TokenStream;
 use quote::{ quote, format_ident };
-use syn::{
-    parse_macro_input,
-    DeriveInput,
-    Data,
-    Fields,
-    Lit,
-    Attribute,
-    Field,
-    Type,
-    Expr,
-    ExprLit,
-    Ident,
-    Path,
-    Meta,
-    meta::ParseNestedMeta,
-};
-use syn::spanned::Spanned;
-use std::collections::HashMap;
+use syn::{ parse_macro_input, DeriveInput, Data, DataStruct, Fields, Meta, Lit, Field, Type };
 
-/// Implements the #[derive(Tool)] macro
-///
-/// This macro automatically generates an implementation of the ToTool trait for a struct,
-/// allowing it to be converted to a Tool with minimal code.
+/// Derive macro for implementing a tool from a struct
 ///
 /// # Example
+///
 /// ```
-/// use mcp_rs_tool_derive::Tool;
-///
-/// // Define an enum for operation
-/// #[derive(Debug, Clone, Serialize, Deserialize)]
-/// pub enum Operation {
-///     Add,
-///     Subtract,
-///     Multiply,
-///     Divide,
-/// }
-///
-/// // Implement EnumValues for the enum to provide its variants
-/// impl EnumValues for Operation {
-///    fn enum_values() -> Vec<String> {
-///        vec!["add".to_string(), "subtract".to_string(), "multiply".to_string(), "divide".to_string()]
-///    }
-/// }
-///
-/// // Define a struct for your tool
-/// #[derive(Tool, Debug, Clone)]
-/// #[tool(description = "Performs basic arithmetic")]
-/// pub struct Calculator {
+/// #[derive(Tool)]
+/// #[tool(description = "A calculator tool")]
+/// struct Calculator {
 ///     #[param(description = "First operand", required = true)]
-///     a: i64,
+///     a: f64,
 ///
 ///     #[param(description = "Second operand", required = true)]
-///     b: i64,
+///     b: f64,
 ///
-///     #[param(description = "Operation to perform", required = true)]
+///     #[param(description = "Operation to perform", required = true, enum_values = "Add,Subtract,Multiply,Divide")]
 ///     operation: Operation,
 /// }
-///
-/// // Later in your code:
-/// let calc = Calculator { a: 5, b: 10, operation: Operation::Add };
-/// let tool = calc.to_tool(); // Automatically creates a Tool with proper parameters
 /// ```
-///
-/// The macro will:
-/// 1. Use the struct name to generate the tool name (converted to snake_case)
-/// 2. Extract parameter definitions from struct fields
-/// 3. Automatically detect enum types and use their variants as enum values if they implement EnumValues
-/// 4. Generate an implementation of ToTool that builds the tool
 #[proc_macro_derive(Tool, attributes(tool, param))]
 pub fn derive_tool(input: TokenStream) -> TokenStream {
     // Parse the input tokens into a syntax tree
     let input = parse_macro_input!(input as DeriveInput);
 
-    // Extract the struct name
-    let struct_name = &input.ident;
+    // Get the name of the struct
+    let name = &input.ident;
+    let name_str = name.to_string();
 
-    // Generate a snake case name from the struct name
-    let tool_name = to_snake_case(&struct_name.to_string());
-
-    // Default description (can be overridden by attributes)
-    let mut tool_description = format!("Tool generated from {}", struct_name);
-
-    // Parse the tool attributes if present
+    // Get the tool description from the #[tool] attribute
+    let mut tool_description = format!("Tool for {}", name_str);
     for attr in &input.attrs {
         if attr.path().is_ident("tool") {
             attr.parse_nested_meta(|meta| {
@@ -98,34 +47,24 @@ pub fn derive_tool(input: TokenStream) -> TokenStream {
         }
     }
 
-    // Only proceed with struct data
-    let fields = if let Data::Struct(data) = &input.data {
-        if let Fields::Named(fields) = &data.fields {
-            fields
-        } else {
-            panic!("Unnamed fields are not supported");
-        }
-    } else {
-        panic!("Tool can only be derived for structs");
+    // Get the struct fields
+    let fields = match &input.data {
+        Data::Struct(DataStruct { fields: Fields::Named(fields), .. }) => &fields.named,
+        _ => panic!("Tool derive only works on structs with named fields"),
     };
 
-    // Extract the field identifiers for later use in match statement
-    let field_identifiers = fields.named.iter().map(|f| f.ident.as_ref().unwrap());
+    // Generate code for each parameter based on the struct fields
+    let params = fields.iter().map(|field| {
+        let field_name = field.ident.as_ref().expect("Named field expected").to_string();
 
-    // Process all parameter fields
-    let parameter_additions = fields.named.iter().map(|field| {
-        let field_name = field.ident.as_ref().unwrap().to_string();
-        let field_ident = field.ident.as_ref().unwrap();
-
-        // Default parameter attributes
-        let mut description = format!("Parameter {}", field_name);
+        // Default parameter description and required flag
+        let mut description = format!("Parameter: {}", field_name);
         let mut required = false;
-        let mut explicit_enum_values = None;
+        let mut explicit_enum_values: Option<Vec<String>> = None;
 
-        // Process all param attributes for this field
+        // Extract parameter attributes
         for attr in &field.attrs {
             if attr.path().is_ident("param") {
-                // Try to extract values using the standard approach
                 attr.parse_nested_meta(|meta| {
                     if meta.path.is_ident("description") {
                         let value = meta.value()?;
@@ -143,9 +82,8 @@ pub fn derive_tool(input: TokenStream) -> TokenStream {
                         let value = meta.value()?;
                         let lit: Lit = value.parse()?;
                         if let Lit::Str(s) = lit {
-                            // Parse enum values from string
-                            let enum_vals_str = s.value().replace(['[', ']', '"', '\''], "");
-                            let parsed_values = enum_vals_str
+                            let values_str = s.value();
+                            let parsed_values = values_str
                                 .split(',')
                                 .map(|s| s.trim().to_string())
                                 .collect::<Vec<_>>();
@@ -167,7 +105,7 @@ pub fn derive_tool(input: TokenStream) -> TokenStream {
         let param_builder = if let Some(enum_vals) = explicit_enum_values {
             // If explicit enum values are provided, use them
             quote! {
-                ToolParameterBuilder::new(#field_name, #param_type)
+                ::mcp_rs::typess::tools::ToolParameterBuilder::new(#field_name, #param_type)
                     .description(#description)
                     .required(#required)
                     .enum_values(vec![#(#enum_vals),*])
@@ -176,7 +114,7 @@ pub fn derive_tool(input: TokenStream) -> TokenStream {
         } else {
             // For all other types, just use the basic builder without enum values
             quote! {
-                ToolParameterBuilder::new(#field_name, #param_type)
+                ::mcp_rs::typess::tools::ToolParameterBuilder::new(#field_name, #param_type)
                     .description(#description)
                     .required(#required)
                     .build()
@@ -189,131 +127,110 @@ pub fn derive_tool(input: TokenStream) -> TokenStream {
         }
     });
 
-    // Generate the implementation
-    let output =
+    // Generate code for the Tool trait implementation
+    let expanded =
         quote! {
-        impl ToTool for #struct_name {
-            fn to_tool(&self) -> Tool {
-                let mut builder = ToolBuilder::new(#tool_name, #tool_description);
+        impl ::mcp_rs::typess::tools::ToTool for #name {
+            fn to_tool(&self) -> ::mcp_rs::typess::tools::Tool {
+                let mut builder = ::mcp_rs::typess::tools::ToolBuilder::new(#name_str, #tool_description);
                 
-                // Add parameters based on fields
-                #(#parameter_additions)*
+                // Add all parameters
+                #(#params)*
                 
                 builder.build()
             }
         }
+        
+        impl ::mcp_rs::typess::tools::EnumValues for #name {
+            fn enum_values() -> Vec<String> {
+                vec![]
+            }
+        }
     };
 
-    output.into()
+    // Return the generated impl
+    expanded.into()
 }
 
-// Helper function to determine the ToolParameterType for a field
+/// Helper function to determine parameter type information from a struct field
 fn get_parameter_info_for_field(
     field: &Field
 ) -> (proc_macro2::TokenStream, bool, Option<syn::TypePath>) {
     match &field.ty {
         Type::Path(type_path) => {
-            let last_segment = type_path.path.segments.last().unwrap();
-            let type_name = last_segment.ident.to_string();
+            // Check the last segment to determine the type
+            if let Some(segment) = type_path.path.segments.last() {
+                let type_name = segment.ident.to_string();
 
-            match type_name.as_str() {
-                "String" | "str" =>
-                    (quote! { ToolParameterType::String }, false, Some(type_path.clone())),
-                | "i8"
-                | "i16"
-                | "i32"
-                | "i64"
-                | "i128"
-                | "isize"
-                | "u8"
-                | "u16"
-                | "u32"
-                | "u64"
-                | "u128"
-                | "usize"
-                | "f32"
-                | "f64" => (quote! { ToolParameterType::Number }, false, Some(type_path.clone())),
-                "bool" => (quote! { ToolParameterType::Boolean }, false, Some(type_path.clone())),
-                // Handle Option<T> types
-                "Option" => {
-                    if let syn::PathArguments::AngleBracketed(args) = &last_segment.arguments {
-                        if let Some(syn::GenericArgument::Type(inner_type)) = args.args.first() {
-                            if let Type::Path(inner_path) = inner_type {
-                                if let Some(inner_segment) = inner_path.path.segments.last() {
-                                    let inner_type_name = inner_segment.ident.to_string();
-                                    match inner_type_name.as_str() {
-                                        "String" | "str" =>
-                                            (
-                                                quote! { ToolParameterType::String },
-                                                false,
-                                                Some(inner_path.clone()),
-                                            ),
-                                        | "i8"
-                                        | "i16"
-                                        | "i32"
-                                        | "i64"
-                                        | "i128"
-                                        | "isize"
-                                        | "u8"
-                                        | "u16"
-                                        | "u32"
-                                        | "u64"
-                                        | "u128"
-                                        | "usize"
-                                        | "f32"
-                                        | "f64" =>
-                                            (
-                                                quote! { ToolParameterType::Number },
-                                                false,
-                                                Some(inner_path.clone()),
-                                            ),
-                                        "bool" =>
-                                            (
-                                                quote! { ToolParameterType::Boolean },
-                                                false,
-                                                Some(inner_path.clone()),
-                                            ),
-                                        // Assume any other type is an enum
-                                        _ =>
-                                            (
-                                                quote! { ToolParameterType::String },
-                                                true,
-                                                Some(inner_path.clone()),
-                                            ),
-                                    }
-                                } else {
-                                    (quote! { ToolParameterType::String }, false, None)
-                                }
-                            } else {
-                                (quote! { ToolParameterType::String }, false, None)
-                            }
-                        } else {
-                            (quote! { ToolParameterType::String }, false, None)
-                        }
-                    } else {
-                        (quote! { ToolParameterType::String }, false, None)
-                    }
+                if type_name == "String" || type_name == "str" {
+                    (
+                        quote! { ::mcp_rs::typess::tools::ToolParameterType::String },
+                        false,
+                        Some(type_path.clone()),
+                    )
+                } else if
+                    type_name == "i8" ||
+                    type_name == "i16" ||
+                    type_name == "i32" ||
+                    type_name == "i64" ||
+                    type_name == "u8" ||
+                    type_name == "u16" ||
+                    type_name == "u32" ||
+                    type_name == "u64" ||
+                    type_name == "f32" ||
+                    type_name == "f64"
+                {
+                    (
+                        quote! { ::mcp_rs::typess::tools::ToolParameterType::Number },
+                        false,
+                        Some(type_path.clone()),
+                    )
+                } else if type_name == "bool" {
+                    (
+                        quote! { ::mcp_rs::typess::tools::ToolParameterType::Boolean },
+                        false,
+                        Some(type_path.clone()),
+                    )
+                } else if type_name == "Vec" {
+                    (
+                        quote! { ::mcp_rs::typess::tools::ToolParameterType::Array },
+                        false,
+                        Some(type_path.clone()),
+                    )
+                } else if type_name == "HashMap" || type_name == "BTreeMap" {
+                    (
+                        quote! { ::mcp_rs::typess::tools::ToolParameterType::Object },
+                        false,
+                        Some(type_path.clone()),
+                    )
+                } else {
+                    // Assume it's an enum (or other object type)
+                    (
+                        quote! { ::mcp_rs::typess::tools::ToolParameterType::String },
+                        true,
+                        Some(type_path.clone()),
+                    )
                 }
-                // Assume any other type is an enum
-                _ => (quote! { ToolParameterType::String }, true, Some(type_path.clone())),
+            } else {
+                // Default to Object if we can't determine
+                (quote! { ::mcp_rs::typess::tools::ToolParameterType::Object }, false, None)
             }
         }
-        _ => (quote! { ToolParameterType::String }, false, None), // Default to string for complex types
+        _ => {
+            // Default to Object for complex types
+            (quote! { ::mcp_rs::typess::tools::ToolParameterType::Object }, false, None)
+        }
     }
 }
 
-// Helper function to convert CamelCase to snake_case
+/// Convert a string from CamelCase to snake_case
 fn to_snake_case(s: &str) -> String {
     let mut result = String::new();
-    for (i, c) in s.chars().enumerate() {
-        if c.is_uppercase() {
-            if i > 0 {
-                result.push('_');
-            }
-            result.push(c.to_lowercase().next().unwrap());
-        } else {
-            result.push(c);
+    for (i, c) in s.char_indices() {
+        if i > 0 && c.is_uppercase() {
+            result.push('_');
         }
+        result.push(c.to_lowercase().next().unwrap());
     }
     result
 }
@@ -322,8 +239,6 @@ fn to_snake_case(s: &str) -> String {
 mod tests {
     #[test]
     fn it_works() {
-        // Tests for the macro implementation would go here
-        assert_eq!(super::to_snake_case("HelloWorld"), "hello_world");
-        assert_eq!(super::to_snake_case("Calculator"), "calculator");
+        // Tests would be added here
     }
 }

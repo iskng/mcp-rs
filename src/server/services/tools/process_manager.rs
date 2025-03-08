@@ -3,7 +3,7 @@
 //! This module implements the process management functionality for executing tools
 //! as external processes, capturing their output, and managing their lifecycle.
 
-use crate::errors::Error;
+use crate::protocol::Error;
 use std::collections::HashMap;
 use std::process::Stdio;
 use std::sync::Arc;

@@ -1,22 +1,9 @@
 use crate::errors::Error;
-use crate::server::resources::{ ResourceRegistry, ResourceProvider, TemplateResourceProvider };
+use crate::server::resources::ResourceRegistry;
 use crate::server::MessageHandler;
-use crate::types::protocol::{
-    Message,
-    Notification,
-    Request,
-    RequestType,
-    Response,
-    ResponseOutcome,
-    ErrorData,
-};
+use crate::types::protocol::{ Message, Request, Response, ResponseOutcome, ErrorData };
 use crate::types::resources::{
-    Resource,
-    ResourceTemplate,
-    ResourceContent,
-    Parameter,
     ListResourcesParams,
-    ListResourcesResult,
     ReadResourceParams,
     ReadResourceResult,
     SubscribeResourceParams,
@@ -24,8 +11,6 @@ use crate::types::resources::{
     UnsubscribeResourceParams,
     UnsubscribeResourceResult,
     ListResourceTemplatesParams,
-    ListResourceTemplatesResult,
-    UriTemplate,
 };
 use async_trait::async_trait;
 use serde_json::json;

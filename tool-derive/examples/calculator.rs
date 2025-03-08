@@ -3,29 +3,19 @@
 //! This example shows how to set up an MCP server with handlers
 //! for different message types, such as initialization and requests.
 
-use mcp_rs::errors::Error;
-use mcp_rs::server::Server;
-use mcp_rs::server::tools::tool_registry::ToolRegistry;
-use mcp_rs::server::handlers::{ ResourceHandler, ToolHandler };
-use mcp_rs::server::resources::ResourceRegistry;
-use mcp_rs::types::protocol::RequestType;
-use mcp_rs::transport::TransportType;
-use mcp_rs::types::resources::{ Resource, ResourceContent };
-use mcp_rs::types::tools::{
-    CallToolParams,
-    CallToolResult,
-    CallToolResultBuilder,
-    ToTool,
-    ToolBuilder,
-    ToolParameterBuilder,
-    ToolParameterType,
-};
 use async_trait::async_trait;
-use serde::{ Serialize, Deserialize };
-use tool_derive::Tool;
-use mcp_rs::types::Tool;
-use mcp_rs::types::protocol::Role;
+use mcp_rs::protocol::Error;
+use mcp_rs::server::Server;
+use mcp_rs::server::handlers::{ ResourceHandler, ToolHandler };
+use mcp_rs::server::services::resources::ResourceRegistry;
+use mcp_rs::server::services::tools::tool_registry::ToolRegistry;
+use mcp_rs::protocol::{ CallToolParams, CallToolResult, CallToolResultBuilder, ToolBuilder };
+use mcp_rs::transport::TransportType;
+use mcp_rs::protocol::Tool;
+use mcp_rs::protocol::Role;
+use serde::{ Deserialize, Serialize };
 use std::sync::Arc;
+use tool_derive::Tool;
 use tracing::Level;
 
 // Define an enum for the calculator operations
@@ -39,7 +29,7 @@ pub enum Operation {
 
 // Define a Calculator struct using our derive macro
 #[derive(Tool, Debug, Clone, Serialize, Deserialize)]
-#[tool(description = "Performs basic arithmetic")]
+#[tool(description = "Performs basic arithmetic on US EAST server")]
 pub struct Calculator {
     #[param(description = "First operand", required = true)]
     pub a: f64,

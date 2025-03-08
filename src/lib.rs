@@ -8,17 +8,15 @@
 
 // Re-export core components
 pub mod client;
-pub mod errors;
-pub mod server;
 pub mod protocol;
-pub mod types;
+pub mod server;
 // pub mod server_session;
 
 pub mod transport;
 
 pub mod utils;
 // Re-export commonly used items
-pub use errors::Error;
 pub use transport::Transport;
+pub use transport::DirectIOTransport;
 pub use transport::sse_server::SseServerTransport;
 pub use transport::stdio::StdioTransport;

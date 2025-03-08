@@ -2,15 +2,16 @@
 pub mod resource_registry;
 
 // Re-export public types from resource_registry
-pub use resource_registry::{ ResourceProvider, TemplateResourceProvider, ResourceRegistry };
+pub use resource_registry::{ResourceProvider, ResourceRegistry, TemplateResourceProvider};
 
-use crate::errors::Error;
-use crate::types::resources::{ Resource, ResourceTemplate, ResourceContent };
+use crate::protocol::Annotations;
+use crate::protocol::Error;
+use crate::protocol::Resource;
 
 use async_trait::async_trait;
-use std::collections::{ HashMap, HashSet };
+
 use std::sync::Arc;
-use tokio::sync::{ mpsc, Mutex, RwLock };
+use tokio::sync::{Mutex, mpsc};
 
 /// Resource lifecycle states
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -92,7 +93,9 @@ mod memory_resource {
         }
 
         pub fn from_string(content: String) -> Self {
-            Self { content: content.into_bytes() }
+            Self {
+                content: content.into_bytes(),
+            }
         }
     }
 
@@ -132,15 +135,15 @@ mod file_resource {
     #[async_trait]
     impl ResourceImpl for FileResourceImpl {
         async fn read(&self) -> Result<Vec<u8>, Error> {
-            fs::read(&self.path).await.map_err(|e|
-                Error::Resource(format!("Failed to read file: {}", e))
-            )
+            fs::read(&self.path)
+                .await
+                .map_err(|e| Error::Resource(format!("Failed to read file: {}", e)))
         }
 
         async fn write(&mut self, content: &[u8]) -> Result<(), Error> {
-            fs::write(&self.path, content).await.map_err(|e|
-                Error::Resource(format!("Failed to write file: {}", e))
-            )
+            fs::write(&self.path, content)
+                .await
+                .map_err(|e| Error::Resource(format!("Failed to write file: {}", e)))
         }
 
         async fn close(&mut self) -> Result<(), Error> {
@@ -151,8 +154,8 @@ mod file_resource {
 }
 
 // Re-export implementations
-pub use self::memory_resource::MemoryResourceImpl;
 pub use self::file_resource::FileResourceImpl;
+pub use self::memory_resource::MemoryResourceImpl;
 
 // Implement ResourceInstance methods
 impl ResourceInstance {
@@ -170,7 +173,7 @@ impl ResourceInstance {
 
     pub async fn set_implementation(
         &self,
-        implementation: Box<dyn ResourceImpl>
+        implementation: Box<dyn ResourceImpl>,
     ) -> Result<(), Error> {
         let mut impl_guard = self.implementation.lock().await;
         *impl_guard = Some(implementation);
@@ -186,7 +189,9 @@ impl ResourceInstance {
         if let Some(impl_ref) = &*impl_guard {
             impl_ref.read().await
         } else {
-            Err(Error::Resource("Resource implementation not set".to_string()))
+            Err(Error::Resource(
+                "Resource implementation not set".to_string(),
+            ))
         }
     }
 
@@ -201,7 +206,9 @@ impl ResourceInstance {
             }
             result
         } else {
-            Err(Error::Resource("Resource implementation not set".to_string()))
+            Err(Error::Resource(
+                "Resource implementation not set".to_string(),
+            ))
         }
     }
 
@@ -254,6 +261,8 @@ impl ResourceInstance {
             name: self.name.clone(),
             description: self.description.clone(),
             mime_type: self.mime_type.clone(),
+            size: None,
+            annotations: None,
         }
     }
 }

@@ -1,16 +1,34 @@
-//! Message handlers for different message types
+//! Server message handlers organized by domain
 //!
-//! This module contains implementations of the MessageHandler trait
-//! for various message types.
+//! This module contains handler traits and implementations for processing
+//! client messages and dispatching them to appropriate domain-specific handlers.
 
-mod notification_handler;
-mod request_handler;
-mod initialize_handler;
-mod tool_handler;
-mod resource_handler;
+// Core handlers
+mod base;
+// Server handler interface
+mod route_handler;
+pub use route_handler::RouteHandler;
 
-pub use notification_handler::NotificationHandler;
-pub use request_handler::RequestHandler;
-pub use initialize_handler::InitializeHandler;
-pub use tool_handler::ToolHandler;
-pub use resource_handler::ResourceHandler;
+// Specialized handlers
+mod handshake;
+pub use handshake::{ DefaultHandshakeHandler, HandshakeHandler, PingResult };
+
+// Initialize handler
+mod initialize;
+pub use initialize::{ DefaultInitializeHandler, InitializeHandler, InitializeHandlerBuilder };
+
+// Tool handlers
+mod tools;
+pub use tools::{ DefaultToolHandler, ToolHandler };
+
+// Resource handlers
+mod resources;
+pub use resources::{ DefaultResourceHandler, ResourceHandler };
+
+// Composite implementation - concrete implementation
+pub mod composite;
+pub use composite::CompositeServerHandler;
+
+// We'll implement Axum integration later when needed
+// mod axum_integration;
+// pub use axum_integration::{ handle_client_message, create_handler };

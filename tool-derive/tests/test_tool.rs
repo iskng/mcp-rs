@@ -1,8 +1,6 @@
-use mcp_rs::types::tools::ToTool;
+use mcp_rs::protocol::Tool;
+use serde::{ Deserialize, Serialize };
 use tool_derive::Tool;
-use serde::{ Serialize, Deserialize };
-use mcp_rs::types::Tool;
-use mcp_rs::types::tools::{ ToolBuilder, ToolParameterBuilder, ToolParameterType };
 
 // Define an operation enum
 #[derive(Debug, Clone, Serialize, Deserialize)]

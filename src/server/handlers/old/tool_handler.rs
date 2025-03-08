@@ -5,8 +5,15 @@ use tracing::{ info, error };
 use std::sync::Arc;
 
 use crate::errors::Error;
-use crate::types::protocol::{ Message, RequestMessage, ResponseMessage };
-use crate::types::tools::{ CallToolParams, ListToolsParams, ListToolsResult };
+use crate::protocol::{
+    JSONRPCMessage as Message,
+    JSONRPCRequest as RequestMessage,
+    JSONRPCResponse,
+    CallToolParams,
+    ListToolsRequest as ListToolsParams,
+    ListToolsResult,
+};
+use crate::protocol::utils::{ create_success_response, create_error_response, request_id_to_i32 };
 use crate::server::MessageHandler;
 use crate::server::tools::tool_registry::ToolRegistry;
 
@@ -30,7 +37,7 @@ impl ToolHandler {
         &self,
         params: ListToolsParams,
         client_id: &str,
-        req: &crate::types::protocol::Request
+        req: &RequestMessage
     ) -> Result<Option<Message>, Error> {
         info!("TOOL LIST request from client {}", client_id);
 

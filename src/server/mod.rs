@@ -5,14 +5,11 @@
 
 use async_trait::async_trait;
 
-use crate::errors::Error;
-use crate::types::protocol::{ Message, MessageType, RequestType, NotificationType, ResponseType };
-pub mod server;
+use crate::protocol::Error;
+use crate::protocol::JSONRPCMessage as Message;
 pub mod handlers;
-
-pub mod resources;
-
-pub mod tools;
+pub mod server;
+pub mod services;
 
 /// MessageHandler trait defines the interface for handling messages
 #[async_trait]

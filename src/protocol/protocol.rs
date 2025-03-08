@@ -1,9 +1,11 @@
 //! Type definitions for the Model Context Protocol (MCP).
 //! These types are generated to match the schema defined in schema.json.
 
-use serde::{ Deserialize, Serialize };
 use schemars::JsonSchema;
+use serde::{ Deserialize, Serialize };
 use std::collections::HashMap;
+
+pub const PROTOCOL_VERSION: &str = "2024-11-05";
 
 /// The complete schema definitions matching schema.json
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -550,7 +552,7 @@ pub struct ServerCapabilities {
 
     /// Experimental, non-standard capabilities that the server supports.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub experimental: Option<HashMap<String, HashMap<String, serde_json::Value>>>,
+    pub experimental: Option<HashMap<String, serde_json::Value>>,
 }
 
 /// Resources capability configuration.

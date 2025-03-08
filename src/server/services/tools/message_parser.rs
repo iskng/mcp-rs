@@ -5,7 +5,7 @@
 //! from tool processes, handling partial reads and message boundaries correctly.
 
 use std::io::Error as IoError;
-use tokio::io::{ AsyncBufReadExt, BufReader };
+use tokio::io::{AsyncBufReadExt, BufReader};
 
 /// A parser for reading line-delimited messages from an async reader
 pub struct MessageParser<R> {
@@ -78,8 +78,8 @@ impl<R: tokio::io::AsyncRead + Unpin> MessageParser<R> {
         }
 
         // Then try to read more without blocking
-        match
-            tokio::time::timeout(std::time::Duration::from_millis(1), self.reader.fill_buf()).await
+        match tokio::time::timeout(std::time::Duration::from_millis(1), self.reader.fill_buf())
+            .await
         {
             Ok(Ok(buf)) => {
                 if !buf.is_empty() {
