@@ -12,12 +12,15 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 use tokio::sync::{ Mutex, mpsc, oneshot };
-use url::Url;
 use log::{ info, error };
 
-use crate::errors::Error;
-use crate::types::protocol::Message;
+// Use both protocol types
+use crate::protocol::Error;
+use crate::protocol::{ JSONRPCMessage, RequestId };
+use crate::protocol::messages::Message; // Import the high-level Message type
 use crate::transport::Transport;
+use crate::transport::DirectIOTransport;
+use crate::server::server::AppState;
 
 /// Default timeout for HTTP requests
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -62,11 +65,11 @@ pub struct SseTransport {
     /// URL for the SSE events endpoint
     events_url: String,
     /// URL for the messages endpoint
-    messages_url: String,
+    messages_url: Arc<Mutex<String>>,
     /// HTTP client
     http_client: HttpClient,
     /// Channel for incoming messages
-    rx: mpsc::Receiver<Message>,
+    rx: mpsc::Receiver<JSONRPCMessage>,
     /// Options for the transport
     options: SseOptions,
     /// Session ID (if assigned by server)
@@ -89,26 +92,29 @@ impl SseTransport {
 
     /// Create a new SSE transport with custom options
     pub async fn with_options(base_url: &str, options: SseOptions) -> Result<Self, Error> {
-        // Verify the base URL is valid
-        let base_url = match Url::parse(base_url) {
-            Ok(url) => url,
-            Err(e) => {
-                return Err(Error::Transport(format!("Invalid base URL: {}", e)));
-            }
+        // Normalize the base URL (ensure it ends with a slash)
+        let base_url = if base_url.ends_with('/') {
+            base_url.to_string()
+        } else {
+            format!("{}/", base_url)
         };
 
-        // Create the endpoints
-        let events_url = base_url
-            .join("sse")
-            .map_err(|e| Error::Transport(format!("Failed to create events URL: {}", e)))?
-            .to_string();
+        // Construct the events URL from the base URL
+        let events_url = format!("{}events", base_url);
 
-        let messages_url = base_url
-            .join("message")
-            .map_err(|e| Error::Transport(format!("Failed to create messages URL: {}", e)))?
-            .to_string();
+        // Initial messages URL - this will be updated when we connect
+        let messages_url = Arc::new(Mutex::new(format!("{}message", base_url)));
 
-        // Create the HTTP client with specified timeout
+        // Create a default session ID
+        let session_id = Arc::new(Mutex::new(String::new()));
+
+        // Create the connected flag
+        let connected = Arc::new(Mutex::new(false));
+
+        // Create the ready flag
+        let is_ready = Arc::new(AtomicBool::new(false));
+
+        // Configure the HTTP client with a timeout
         let http_client = ClientBuilder::new()
             .timeout(options.timeout)
             .build()
@@ -117,33 +123,21 @@ impl SseTransport {
         // Create a channel for incoming messages
         let (tx, rx) = mpsc::channel(100);
 
-        // Create the session ID
-        let session_id = Arc::new(Mutex::new(String::new()));
+        // Create a channel for shutdown signaling
+        let (shutdown_tx, mut shutdown_rx) = oneshot::channel();
 
-        // Create the connected flag
-        let connected = Arc::new(Mutex::new(false));
-
-        // Create the is_ready flag
-        let is_ready = Arc::new(AtomicBool::new(false));
-
-        // Create a shutdown signal
-        let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
-
-        // Clone values for the task
+        // Spawn a background task to handle the SSE connection
+        let http_client_clone = http_client.clone();
         let events_url_clone = events_url.clone();
-        let tx_clone = tx.clone();
+        let messages_url_clone = messages_url.clone();
         let session_id_clone = session_id.clone();
         let connected_clone = connected.clone();
         let is_ready_clone = is_ready.clone();
-        let http_client_clone = http_client.clone();
-        let messages_url_clone = messages_url.clone();
+        let tx_clone = tx.clone();
 
-        // Spawn a task to handle the SSE connection
         let task_handle = tokio::spawn(async move {
-            // Create a task-local shutdown signal
-            let mut shutdown_rx = shutdown_rx;
+            tracing::info!("Starting SSE connection task");
 
-            // Enter the connection loop
             loop {
                 // Check if we should shut down
                 if shutdown_rx.try_recv().is_ok() {
@@ -208,11 +202,11 @@ impl SseTransport {
     async fn connect_to_sse(
         http_client: HttpClient,
         events_url: String,
-        sender: mpsc::Sender<Message>,
+        sender: mpsc::Sender<JSONRPCMessage>,
         session_id: Arc<Mutex<String>>,
         connected: Arc<Mutex<bool>>,
         is_ready: Arc<AtomicBool>,
-        _messages_url: String
+        messages_url: Arc<Mutex<String>>
     ) -> Result<(), Error> {
         let mut retries = 0;
         let max_retries = 5;
@@ -296,16 +290,14 @@ impl SseTransport {
             *connected.lock().await = true;
             tracing::info!("Successfully connected to SSE endpoint!");
 
-            // Set the transport as ready immediately - we no longer wait for endpoint event
-            is_ready.store(true, std::sync::atomic::Ordering::Release);
-
             // Process the response stream
             match
                 Self::process_sse_stream(
                     response,
                     sender.clone(),
                     session_id.clone(),
-                    is_ready.clone()
+                    is_ready.clone(),
+                    messages_url.clone()
                 ).await
             {
                 Ok(_) => {
@@ -347,9 +339,10 @@ impl SseTransport {
 
     async fn process_sse_stream(
         response: reqwest::Response,
-        sender: mpsc::Sender<Message>,
+        sender: mpsc::Sender<JSONRPCMessage>,
         session_id: Arc<Mutex<String>>,
-        is_ready: Arc<AtomicBool>
+        is_ready: Arc<AtomicBool>,
+        messages_url: Arc<Mutex<String>>
     ) -> Result<(), Error> {
         let mut stream = response.bytes_stream();
         let mut buffer = String::new();
@@ -382,11 +375,35 @@ impl SseTransport {
                         if line.is_empty() {
                             // Empty line marks the end of an event
                             if !event_type.is_empty() && !event_data.is_empty() {
-                                // Process the complete event - only for message events
-                                if event_type == "message" {
-                                    Self::process_message_event(&event_data, &sender).await?;
-                                } else if event_type == "error" {
-                                    tracing::error!("Received error event: {}", event_data);
+                                tracing::debug!("Processing event type: {}", event_type);
+
+                                // Handle different event types
+                                match event_type.as_str() {
+                                    "endpoint" => {
+                                        // Server is providing the message endpoint URL
+                                        tracing::info!("Received endpoint URL: {}", event_data);
+                                        let mut messages_url_guard = messages_url.lock().await;
+                                        *messages_url_guard = event_data.clone();
+                                    }
+                                    "connected" => {
+                                        tracing::info!(
+                                            "Server confirmed connection: {}",
+                                            event_data
+                                        );
+                                        is_ready.store(true, std::sync::atomic::Ordering::Release);
+                                    }
+                                    "message" => {
+                                        Self::process_message_event(&event_data, &sender).await?;
+                                    }
+                                    "error" => {
+                                        tracing::error!("Received error event: {}", event_data);
+                                    }
+                                    "keep-alive" => {
+                                        tracing::trace!("Received keep-alive");
+                                    }
+                                    _ => {
+                                        tracing::debug!("Unhandled event type: {}", event_type);
+                                    }
                                 }
 
                                 // Reset event state
@@ -424,25 +441,26 @@ impl SseTransport {
 
     async fn process_message_event(
         event_data: &str,
-        sender: &mpsc::Sender<Message>
+        sender: &mpsc::Sender<JSONRPCMessage>
     ) -> Result<(), Error> {
         tracing::debug!("Processing message event: {}", event_data);
 
-        // Try to parse the message from JSON
-        match serde_json::from_str::<Message>(event_data) {
-            Ok(message) => {
-                // Send the message to the receiver
-                if let Err(e) = sender.send(message).await {
-                    tracing::error!("Failed to send message to channel: {}", e);
-                    return Err(Error::Transport("Failed to process message".to_string()));
-                }
-                Ok(())
-            }
+        // Step 1: Parse raw JSON to JSONRPCMessage
+        let message: JSONRPCMessage = match serde_json::from_str(event_data) {
+            Ok(msg) => msg,
             Err(e) => {
-                tracing::error!("Failed to parse message from event data: {}", e);
-                Err(Error::Transport(format!("Invalid message format: {}", e)))
+                tracing::error!("Failed to parse JSONRPCMessage: {}", e);
+                return Err(Error::Transport(format!("Invalid JSON: {}", e)));
             }
+        };
+
+        // Step 3: Send the Message to the channel
+        if let Err(e) = sender.send(message).await {
+            tracing::error!("Failed to send message to channel: {}", e);
+            return Err(Error::Transport("Failed to send message".to_string()));
         }
+
+        Ok(())
     }
 
     // Message filtering based on ID
@@ -456,29 +474,55 @@ impl SseTransport {
             return Ok(());
         }
 
-        // Parse message
-        let message: Message = serde_json::from_str(event_data)?;
+        // Parse as JSONRPCMessage first
+        let jsonrpc_msg: JSONRPCMessage = serde_json::from_str(event_data)?;
 
-        // If message is a response, check if we have a pending request for it
-        if let Message::Response(response) = &message {
-            // Convert i32 ID to u64 for HashMap lookup
-            let id = response.id as u64;
+        // Check if it's a response message with an ID
+        if let JSONRPCMessage::Response(ref response) = jsonrpc_msg {
+            let id_value = match &response.id {
+                RequestId::Number(num) => Some(*num as u64),
+                RequestId::String(s) => s.parse::<u64>().ok(),
+                _ => None,
+            };
 
-            // Check if we have a pending request for this ID
-            let mut pending = pending_requests.lock().await;
-            if let Some(sender) = pending.remove(&id) {
-                // Send response to the waiting call
-                let _ = sender.send(Ok(message.clone()));
-                return Ok(());
+            if let Some(id) = id_value {
+                // If this message has a corresponding request, send it directly
+                let mut pending = pending_requests.lock().await;
+                if let Some(req_sender) = pending.remove(&id) {
+                    // Convert to Message before sending to the request handler
+                    match jsonrpc_msg.clone().into_message() {
+                        Ok(message) => {
+                            let _ = req_sender.send(Ok(message));
+                            return Ok(());
+                        }
+                        Err(e) => {
+                            tracing::error!("Failed to convert response to Message: {}", e);
+                            return Err(Error::Transport(format!("Invalid message format: {}", e)));
+                        }
+                    }
+                }
             }
         }
 
-        // Otherwise, forward the message
-        sender
-            .send(message).await
-            .map_err(|e| Error::Transport(format!("Failed to forward message: {}", e)))?;
+        // For other messages, convert to Message and send to the channel
+        match jsonrpc_msg.into_message() {
+            Ok(message) => {
+                if let Err(e) = sender.send(message).await {
+                    tracing::error!("Failed to forward message: {}", e);
+                    return Err(Error::Transport("Failed to forward message".to_string()));
+                }
+                Ok(())
+            }
+            Err(e) => {
+                tracing::error!("Failed to convert message: {}", e);
+                Err(Error::Transport(format!("Invalid message format: {}", e)))
+            }
+        }
+    }
 
-        Ok(())
+    /// Get the current session ID
+    pub async fn session_id(&self) -> String {
+        self.session_id.lock().await.clone()
     }
 }
 
@@ -498,28 +542,20 @@ impl Transport for SseTransport {
         Ok(())
     }
 
-    async fn receive(&mut self) -> Result<(Option<String>, Message), Error> {
+    async fn send_to(&mut self, _client_id: &str, message: &JSONRPCMessage) -> Result<(), Error> {
         // Wait for the transport to be ready
         if !self.is_ready.load(std::sync::atomic::Ordering::Acquire) {
             return Err(Error::Transport("Transport not ready".to_string()));
         }
 
-        // Receive a message from the channel
-        match self.rx.recv().await {
-            Some(msg) => Ok((None, msg)),
-            None => Err(Error::Transport("Channel closed".to_string())),
-        }
-    }
-
-    async fn send(&mut self, message: &Message) -> Result<(), Error> {
-        self.send_to("", message).await
-    }
-
-    async fn send_to(&mut self, _client_id: &str, message: &Message) -> Result<(), Error> {
-        // Wait for the transport to be ready
-        if !self.is_ready.load(std::sync::atomic::Ordering::Acquire) {
-            return Err(Error::Transport("Transport not ready".to_string()));
-        }
+        // Get the current messages URL
+        let messages_url = {
+            let url = self.messages_url.lock().await.clone();
+            if url.is_empty() {
+                return Err(Error::Transport("No message endpoint URL available".to_string()));
+            }
+            url
+        };
 
         // Serialize the message to JSON
         let message_json = serde_json
@@ -528,7 +564,7 @@ impl Transport for SseTransport {
 
         // Send the message to the server via HTTP POST
         let response = self.http_client
-            .post(&self.messages_url)
+            .post(&messages_url)
             .header("Content-Type", "application/json")
             .body(message_json)
             .send().await
@@ -554,19 +590,42 @@ impl Transport for SseTransport {
     }
 
     async fn close(&mut self) -> Result<(), Error> {
-        // Check if already closed
-        if !self.is_connected().await {
-            return Ok(());
-        }
-
-        // Send the shutdown signal
+        // If we have a shutdown channel, send a signal
         if let Some(tx) = self.shutdown_tx.take() {
             let _ = tx.send(());
         }
 
-        // Wait for the task to finish
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        // Mark as disconnected
+        let mut connected = self.connected.lock().await;
+        *connected = false;
 
         Ok(())
+    }
+
+    /// Set the app state
+    async fn set_app_state(&mut self, _app_state: Arc<AppState>) {
+        // Client-side transport doesn't need app state
+        // This is primarily used by server-side transports
+    }
+}
+
+// Add a separate implementation for DirectIOTransport
+#[async_trait]
+impl DirectIOTransport for SseTransport {
+    async fn receive(&mut self) -> Result<(Option<String>, JSONRPCMessage), Error> {
+        // Wait for the transport to be ready
+        if !self.is_ready.load(std::sync::atomic::Ordering::Acquire) {
+            return Err(Error::Transport("Transport not ready".to_string()));
+        }
+
+        // Receive a message from the channel
+        match self.rx.recv().await {
+            Some(msg) => { Ok((None, msg)) }
+            None => Err(Error::Transport("Channel closed".to_string())),
+        }
+    }
+
+    async fn send(&mut self, message: &JSONRPCMessage) -> Result<(), Error> {
+        self.send_to("", message).await
     }
 }

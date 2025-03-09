@@ -6,14 +6,14 @@
 
 use std::sync::Arc;
 
-use crate::protocol::{ JSONRPCMessage as Message, errors::Error };
+use crate::protocol::{ JSONRPCMessage, errors::Error };
 use crate::server::handlers::RouteHandler;
 use crate::server::server::AppState;
 use crate::transport::{ Transport, DirectIOTransport, TransportMessageHandler };
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::process::Stdio;
-use tokio::io::{ AsyncBufReadExt, AsyncReadExt, AsyncWriteExt };
+use tokio::io::{ AsyncBufReadExt, AsyncWriteExt };
 use tokio::process;
 use tokio::sync::mpsc;
 use tracing;
@@ -21,9 +21,9 @@ use tracing;
 /// Channels used for process communication
 struct StdioChannels {
     /// Receiver for incoming messages
-    message_rx: mpsc::Receiver<Result<Message, Error>>,
+    message_rx: mpsc::Receiver<Result<JSONRPCMessage, Error>>,
     /// Sender for outgoing messages
-    outgoing_tx: mpsc::Sender<Message>,
+    outgoing_tx: mpsc::Sender<JSONRPCMessage>,
     /// Task handle for reader
     #[allow(dead_code)]
     reader_task: tokio::task::JoinHandle<()>,
@@ -61,7 +61,7 @@ pub struct StdioTransport {
     /// Buffered reader for stdin
     reader: Option<tokio::io::BufReader<tokio::io::Stdin>>,
 
-    /// Message handler (if registered)
+    /// JSONRPCMessage handler (if registered)
     message_handler: Option<Arc<dyn RouteHandler + Send + Sync>>,
 }
 
@@ -156,7 +156,7 @@ impl StdioTransport {
 /// Process stdout from a child process and forward messages
 async fn stdio_reader(
     stdout: process::ChildStdout,
-    tx: mpsc::Sender<Result<Message, Error>>
+    tx: mpsc::Sender<Result<JSONRPCMessage, Error>>
 ) -> () {
     let mut reader = tokio::io::BufReader::new(stdout);
     let mut line = String::new();
@@ -170,7 +170,7 @@ async fn stdio_reader(
             }
             Ok(_) => {
                 // Parse the JSON message
-                match serde_json::from_str::<Message>(&line) {
+                match serde_json::from_str::<JSONRPCMessage>(&line) {
                     Ok(message) => {
                         let _ = tx.send(Ok(message)).await;
                     }
@@ -188,7 +188,10 @@ async fn stdio_reader(
 }
 
 /// Process outgoing messages and write to stdin
-async fn stdio_writer(mut stdin: process::ChildStdin, mut rx: mpsc::Receiver<Message>) -> () {
+async fn stdio_writer(
+    mut stdin: process::ChildStdin,
+    mut rx: mpsc::Receiver<JSONRPCMessage>
+) -> () {
     while let Some(message) = rx.recv().await {
         match serde_json::to_string(&message) {
             Ok(json) => {
@@ -262,7 +265,7 @@ impl Transport for StdioTransport {
         Ok(())
     }
 
-    async fn send_to(&mut self, _client_id: &str, message: &Message) -> Result<(), Error> {
+    async fn send_to(&mut self, _client_id: &str, message: &JSONRPCMessage) -> Result<(), Error> {
         // StdioTransport is single-client, so ignore client_id and just send the message
         self.send(message).await
     }
@@ -272,7 +275,7 @@ impl Transport for StdioTransport {
 
 #[async_trait]
 impl DirectIOTransport for StdioTransport {
-    async fn receive(&mut self) -> Result<(Option<String>, Message), Error> {
+    async fn receive(&mut self) -> Result<(Option<String>, JSONRPCMessage), Error> {
         if !self.connected {
             return Err(Error::Transport("Transport is not connected".to_string()));
         }
@@ -311,7 +314,7 @@ impl DirectIOTransport for StdioTransport {
         }
     }
 
-    async fn send(&mut self, message: &Message) -> Result<(), Error> {
+    async fn send(&mut self, message: &JSONRPCMessage) -> Result<(), Error> {
         if !self.connected {
             return Err(Error::Transport("Transport is not connected".to_string()));
         }
@@ -347,8 +350,8 @@ impl TransportMessageHandler for RouteHandlerAdapter {
     async fn handle_message(
         &self,
         client_id: &str,
-        message: &Message
-    ) -> Result<Option<Message>, Error> {
+        message: &JSONRPCMessage
+    ) -> Result<Option<JSONRPCMessage>, Error> {
         // Create a client session
         let mut session = crate::transport::middleware::ClientSession::new();
 

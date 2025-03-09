@@ -1,16 +1,30 @@
 use crate::protocol::Error;
 use crate::protocol::{
-    Annotations, BlobResourceContents, Content, Cursor, EmbeddedResource, ImageContent,
-    ListResourcesResult, PaginatedRequestParams, ReadResourceParams, ReadResourceResult, Resource,
-    ResourceContentType, ResourceTemplate, SubscribeParams, TextContent, TextResourceContents,
+    Annotations,
+    BlobResourceContents,
+    Content,
+    Cursor,
+    EmbeddedResource,
+    ImageContent,
+    ListResourcesResult,
+    PaginatedRequestParams,
+    ReadResourceParams,
+    ReadResourceResult,
+    Resource,
+    ResourceContentType,
+    ResourceTemplate,
+    SubscribeParams,
+    TextContent,
+    TextResourceContents,
     UnsubscribeParams,
 };
-use serde_json::Value;
 use std::collections::HashMap;
 use std::fs;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::{ Path, PathBuf };
 use std::sync::Arc;
+use base64::prelude::BASE64_STANDARD;
+use base64::Engine;
 use url::Url;
 
 /// Helper to create a resource from a path
@@ -19,15 +33,13 @@ pub fn resource_from_path(
     name: &str,
     path: &Path,
     description: Option<&str>,
-    mime_type: Option<&str>,
+    mime_type: Option<&str>
 ) -> Result<Resource, Error> {
-    let metadata = fs::metadata(path).map_err(|e| {
-        Error::Resource(format!(
-            "Failed to read metadata for path {}: {}",
-            path.display(),
-            e
-        ))
-    })?;
+    let metadata = fs
+        ::metadata(path)
+        .map_err(|e| {
+            Error::Resource(format!("Failed to read metadata for path {}: {}", path.display(), e))
+        })?;
 
     let size = metadata.len() as i64;
 
@@ -46,7 +58,7 @@ pub fn create_resource_template(
     uri_template: &str,
     name: &str,
     description: Option<&str>,
-    mime_type: Option<&str>,
+    mime_type: Option<&str>
 ) -> ResourceTemplate {
     ResourceTemplate {
         uri_template: uri_template.to_string(),
@@ -61,42 +73,42 @@ pub fn create_resource_template(
 pub fn text_resource_contents_from_file(
     uri: &str,
     path: &Path,
-    mime_type: Option<&str>,
+    mime_type: Option<&str>
 ) -> Result<ResourceContentType, Error> {
-    let content = fs::read_to_string(path).map_err(|e| {
-        Error::Resource(format!(
-            "Failed to read text file {}: {}",
-            path.display(),
-            e
-        ))
-    })?;
+    let content = fs
+        ::read_to_string(path)
+        .map_err(|e| {
+            Error::Resource(format!("Failed to read text file {}: {}", path.display(), e))
+        })?;
 
-    Ok(ResourceContentType::Text(TextResourceContents {
-        uri: uri.to_string(),
-        text: content,
-        mime_type: mime_type.map(|s| s.to_string()),
-    }))
+    Ok(
+        ResourceContentType::Text(TextResourceContents {
+            uri: uri.to_string(),
+            text: content,
+            mime_type: mime_type.map(|s| s.to_string()),
+        })
+    )
 }
 
 /// Helper to create blob resource contents from a file
 pub fn blob_resource_contents_from_file(
     uri: &str,
     path: &Path,
-    mime_type: Option<&str>,
+    mime_type: Option<&str>
 ) -> Result<ResourceContentType, Error> {
-    let content = fs::read(path).map_err(|e| {
-        Error::Resource(format!(
-            "Failed to read binary file {}: {}",
-            path.display(),
-            e
-        ))
-    })?;
+    let content = fs
+        ::read(path)
+        .map_err(|e| {
+            Error::Resource(format!("Failed to read binary file {}: {}", path.display(), e))
+        })?;
 
-    Ok(ResourceContentType::Blob(BlobResourceContents {
-        uri: uri.to_string(),
-        blob: base64::encode(&content),
-        mime_type: mime_type.map(|s| s.to_string()),
-    }))
+    Ok(
+        ResourceContentType::Blob(BlobResourceContents {
+            uri: uri.to_string(),
+            blob: BASE64_STANDARD.encode(&content),
+            mime_type: mime_type.map(|s| s.to_string()),
+        })
+    )
 }
 
 /// Convert a file path to a resource URI
@@ -128,7 +140,7 @@ pub fn create_text_content(text: &str) -> Content {
 pub fn create_image_content(data: &[u8], mime_type: &str) -> Content {
     Content::Image(ImageContent {
         type_field: "image".to_string(),
-        data: base64::encode(data),
+        data: BASE64_STANDARD.encode(data),
         mime_type: mime_type.to_string(),
         annotations: None,
     })
@@ -146,7 +158,7 @@ pub fn create_embedded_resource(resource_content: ResourceContentType) -> Conten
 /// Create a list resources result
 pub fn create_resources_list_result(
     resources: Vec<Resource>,
-    next_cursor: Option<String>,
+    next_cursor: Option<String>
 ) -> ListResourcesResult {
     ListResourcesResult {
         resources,
@@ -209,16 +221,18 @@ impl FileResource {
         path: P,
         description: Option<String>,
         mime_type: Option<String>,
-        is_binary: bool,
+        is_binary: bool
     ) -> Result<Self, io::Error> {
         let path_buf = path.as_ref().to_path_buf();
 
         // Verify the file exists
         if !path_buf.exists() {
-            return Err(io::Error::new(
-                io::ErrorKind::NotFound,
-                format!("File not found: {}", path_buf.display()),
-            ));
+            return Err(
+                io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("File not found: {}", path_buf.display())
+                )
+            );
         }
 
         // Generate a URI if none provided
@@ -263,29 +277,35 @@ impl FileResource {
     pub fn content(&self) -> Result<ResourceContentType, io::Error> {
         if self.is_binary {
             let data = self.read()?;
-            Ok(ResourceContentType::Blob(BlobResourceContents {
-                uri: self.resource.uri.clone(),
-                blob: base64::encode(data),
-                mime_type: self.resource.mime_type.clone(),
-            }))
+            Ok(
+                ResourceContentType::Blob(BlobResourceContents {
+                    uri: self.resource.uri.clone(),
+                    blob: BASE64_STANDARD.encode(data),
+                    mime_type: self.resource.mime_type.clone(),
+                })
+            )
         } else {
             let text = self.read_text()?;
-            Ok(ResourceContentType::Text(TextResourceContents {
-                uri: self.resource.uri.clone(),
-                text,
-                mime_type: self.resource.mime_type.clone(),
-            }))
+            Ok(
+                ResourceContentType::Text(TextResourceContents {
+                    uri: self.resource.uri.clone(),
+                    text,
+                    mime_type: self.resource.mime_type.clone(),
+                })
+            )
         }
     }
 
     /// Convert to embedded resource content
     pub fn to_embedded_resource(&self) -> Result<Content, io::Error> {
         let content = self.content()?;
-        Ok(Content::Resource(EmbeddedResource {
-            type_field: "resource".to_string(),
-            resource: content,
-            annotations: None,
-        }))
+        Ok(
+            Content::Resource(EmbeddedResource {
+                type_field: "resource".to_string(),
+                resource: content,
+                annotations: None,
+            })
+        )
     }
 }
 
@@ -371,8 +391,7 @@ impl UriTemplate {
                 }
                 UriTemplateSegment::Parameter(param_name) => {
                     // Find the next segment that is a literal
-                    let next_segment_pos = self
-                        .segments
+                    let next_segment_pos = self.segments
                         .iter()
                         .position(|s| s == segment)
                         .and_then(|p| {
@@ -384,18 +403,20 @@ impl UriTemplate {
                         });
 
                     // If we have a next literal segment, find where it starts in the URI
-                    let next_literal_pos = (if let Some(next_segment_idx) = next_segment_pos {
-                        if let UriTemplateSegment::Literal(next_literal) =
-                            &self.segments[next_segment_idx]
-                        {
-                            uri[uri_pos..].find(next_literal).map(|p| p + uri_pos)
+                    let next_literal_pos = (
+                        if let Some(next_segment_idx) = next_segment_pos {
+                            if
+                                let UriTemplateSegment::Literal(next_literal) =
+                                    &self.segments[next_segment_idx]
+                            {
+                                uri[uri_pos..].find(next_literal).map(|p| p + uri_pos)
+                            } else {
+                                None
+                            }
                         } else {
                             None
                         }
-                    } else {
-                        None
-                    })
-                    .unwrap_or(uri.len());
+                    ).unwrap_or(uri.len());
 
                     // Extract the parameter value
                     let value = &uri[uri_pos..next_literal_pos];
@@ -466,8 +487,7 @@ pub struct StaticResource {
 impl StaticResource {
     /// Create a new static resource
     pub fn new<F>(resource: Resource, content_provider: F) -> Self
-    where
-        F: Fn() -> Result<ResourceContentType, Error> + Send + Sync + 'static,
+        where F: Fn() -> Result<ResourceContentType, Error> + Send + Sync + 'static
     {
         Self {
             resource,
@@ -477,8 +497,7 @@ impl StaticResource {
 
     /// Create a static text resource
     pub fn text<F>(uri: String, name: String, mime_type: String, text_provider: F) -> Self
-    where
-        F: Fn() -> Result<String, Error> + Send + Sync + 'static,
+        where F: Fn() -> Result<String, Error> + Send + Sync + 'static
     {
         let resource = Resource {
             uri: uri.clone(),
@@ -491,11 +510,13 @@ impl StaticResource {
 
         let content_provider = move || {
             let text = text_provider()?;
-            Ok(ResourceContentType::Text(TextResourceContents {
-                uri: uri.clone(),
-                text,
-                mime_type: Some(mime_type.clone()),
-            }))
+            Ok(
+                ResourceContentType::Text(TextResourceContents {
+                    uri: uri.clone(),
+                    text,
+                    mime_type: Some(mime_type.clone()),
+                })
+            )
         };
 
         Self {
@@ -506,8 +527,7 @@ impl StaticResource {
 
     /// Create a static binary resource
     pub fn binary<F>(uri: String, name: String, mime_type: String, data_provider: F) -> Self
-    where
-        F: Fn() -> Result<Vec<u8>, Error> + Send + Sync + 'static,
+        where F: Fn() -> Result<Vec<u8>, Error> + Send + Sync + 'static
     {
         let resource = Resource {
             uri: uri.clone(),
@@ -520,11 +540,13 @@ impl StaticResource {
 
         let content_provider = move || {
             let data = data_provider()?;
-            Ok(ResourceContentType::Blob(BlobResourceContents {
-                uri: uri.clone(),
-                blob: base64::encode(&data),
-                mime_type: Some(mime_type.clone()),
-            }))
+            Ok(
+                ResourceContentType::Blob(BlobResourceContents {
+                    uri: uri.clone(),
+                    blob: BASE64_STANDARD.encode(&data),
+                    mime_type: Some(mime_type.clone()),
+                })
+            )
         };
 
         Self {
@@ -553,18 +575,19 @@ impl ResourceProvider for StaticResource {
 /// A dynamic resource with content based on URI parameters
 pub struct TemplateResource {
     template: ResourceTemplate,
-    content_provider:
-        Box<dyn (Fn(HashMap<String, String>) -> Result<ResourceContentType, Error>) + Send + Sync>,
+    content_provider: Box<
+        dyn (Fn(HashMap<String, String>) -> Result<ResourceContentType, Error>) + Send + Sync
+    >,
 }
 
 impl TemplateResource {
     /// Create a new template resource
     pub fn new<F>(template: ResourceTemplate, content_provider: F) -> Self
-    where
-        F: Fn(HashMap<String, String>) -> Result<ResourceContentType, Error>
-            + Send
-            + Sync
-            + 'static,
+        where
+            F: Fn(HashMap<String, String>) -> Result<ResourceContentType, Error> +
+                Send +
+                Sync +
+                'static
     {
         Self {
             template,
@@ -574,8 +597,7 @@ impl TemplateResource {
 
     /// Create a template resource with text content
     pub fn text<F>(uri_template: String, name: String, mime_type: String, text_provider: F) -> Self
-    where
-        F: Fn(HashMap<String, String>) -> Result<String, Error> + Send + Sync + 'static,
+        where F: Fn(HashMap<String, String>) -> Result<String, Error> + Send + Sync + 'static
     {
         let template = ResourceTemplate {
             uri_template: uri_template.clone(),
@@ -593,11 +615,13 @@ impl TemplateResource {
                 .map_err(|e| Error::Resource(format!("Failed to generate URI: {}", e)))?;
 
             let text = text_provider(params)?;
-            Ok(ResourceContentType::Text(TextResourceContents {
-                uri,
-                text,
-                mime_type: Some(mime_type.clone()),
-            }))
+            Ok(
+                ResourceContentType::Text(TextResourceContents {
+                    uri,
+                    text,
+                    mime_type: Some(mime_type.clone()),
+                })
+            )
         };
 
         Self {

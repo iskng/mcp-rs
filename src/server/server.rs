@@ -5,11 +5,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::Mutex;
-use std::time::Duration;
-
 use tracing::{ info, warn };
-use tokio::task::JoinHandle;
 
 use crate::protocol::errors::Error;
 use crate::protocol::{
@@ -21,7 +17,7 @@ use crate::protocol::{
     Annotations,
     PROTOCOL_VERSION,
 };
-use crate::server::handlers::{ ResourceHandler, ToolHandler, CompositeServerHandler };
+use crate::server::handlers::CompositeServerHandler;
 use crate::server::handlers::RouteHandler;
 use crate::server::services::{
     resources::resource_registry::ResourceRegistry,
@@ -31,7 +27,6 @@ use crate::server::services::{
 // Not needed with the unified builder approach
 // use crate::transport::ServerHandle;
 use crate::transport::{ Transport, middleware::ClientSessionStore };
-use crate::transport::sse_server::SseServerTransport;
 
 use super::handlers::InitializeHandlerBuilder;
 
@@ -411,7 +406,7 @@ impl ServerBuilder {
             transport.set_app_state(app_state.clone()).await;
         }
         // Create the server
-        let mut server = Server {
+        let server = Server {
             app_state,
             transport: self.transport,
         };

@@ -6,8 +6,6 @@
 //! - Routes messages between clients and the MCP server
 
 use crate::protocol::{ JSONRPCMessage, JSONRPCMessage as Message, errors::Error };
-use crate::server::handlers::RouteHandler;
-use crate::transport::{ Transport };
 use crate::transport::middleware::{ ClientSession, ClientSessionLayer, ClientSessionStore };
 use async_trait::async_trait;
 use async_stream;
@@ -18,19 +16,18 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::{
-    body::Body,
-    extract::{ Extension, Query, State },
-    http::{ Request, StatusCode },
-    middleware::Next,
+    extract::{ Extension, State },
+    http::StatusCode,
     response::{ sse::{ Event, KeepAlive, Sse }, IntoResponse },
     routing::{ get, post },
     Router,
 };
-use tower::ServiceBuilder;
 use tower_http::cors::{ Any, CorsLayer };
 use tokio::sync::mpsc;
 use uuid;
 use tokio::sync::RwLock;
+
+use super::Transport;
 
 /// Configuration options for the SSE server
 #[derive(Debug, Clone)]
@@ -91,46 +88,6 @@ pub enum MessageEvent {
 
     /// A message processing error occurred
     MessageError(Option<String>, Error),
-}
-
-/// Application state for the SSE server
-struct AppState {
-    /// Authentication token (if required)
-    auth_token: Option<String>,
-
-    /// Whether authentication is required
-    require_auth: bool,
-
-    /// Allowed origins for CORS
-    allowed_origins: Option<Vec<String>>,
-
-    /// Server handler for processing messages
-    route_handler: Option<Arc<dyn RouteHandler + Send + Sync>>,
-
-    /// Client session store
-    session_store: Arc<ClientSessionStore>,
-}
-
-impl AppState {
-    fn new(
-        auth_token: Option<String>,
-        require_auth: bool,
-        allowed_origins: Option<Vec<String>>
-    ) -> Self {
-        Self {
-            auth_token,
-            require_auth,
-            allowed_origins,
-            route_handler: None,
-            session_store: Arc::new(ClientSessionStore::new()),
-        }
-    }
-
-    /// Set server handler
-    fn with_route_handler(mut self, handler: Arc<dyn RouteHandler + Send + Sync>) -> Self {
-        self.route_handler = Some(handler);
-        self
-    }
 }
 
 /// Create a transport error
@@ -198,9 +155,6 @@ impl SseServerTransport {
                 return Err(Error::Protocol("No app state available for transport".to_string()));
             }
         };
-
-        // Extract the route handler from app state
-        let route_handler = app_state.route_handler.clone();
 
         tracing::info!("Starting SSE server with route handler from app state");
 
@@ -328,10 +282,9 @@ impl Transport for SseServerTransport {
 }
 
 /// Handle an SSE connection
-async fn handle_sse_connection(
-    Extension(store): Extension<Arc<ClientSessionStore>>,
-    State(state): State<Arc<crate::server::server::AppState>>
-) -> impl IntoResponse {
+async fn handle_sse_connection(Extension(
+    store,
+): Extension<Arc<ClientSessionStore>>) -> impl IntoResponse {
     // Generate session ID
     let session_id = uuid::Uuid::new_v4().to_string();
 

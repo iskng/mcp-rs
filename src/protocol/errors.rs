@@ -99,6 +99,10 @@ pub enum Error {
     #[error("Invalid parameters: {0}")]
     InvalidParams(String),
 
+    /// Lifecycle-related errors
+    #[error("Lifecycle error: {0}")]
+    Lifecycle(String),
+
     /// Resource errors
     #[error("Resource error: {0}")]
     Resource(String),
@@ -165,6 +169,7 @@ impl Error {
             Error::Protocol(_) => INVALID_REQUEST,
             Error::MethodNotFound(_) => METHOD_NOT_FOUND,
             Error::InvalidParams(_) => INVALID_PARAMS,
+            Error::Lifecycle(_) => CLIENT_NOT_INITIALIZED,
             Error::Resource(_) => RESOURCE_NOT_FOUND,
             Error::Tool(_) => TOOL_NOT_FOUND,
             Error::Prompt(_) => PROMPT_NOT_FOUND,
@@ -203,6 +208,7 @@ impl Clone for Error {
             Error::Protocol(s) => Error::Protocol(s.clone()),
             Error::MethodNotFound(s) => Error::MethodNotFound(s.clone()),
             Error::InvalidParams(s) => Error::InvalidParams(s.clone()),
+            Error::Lifecycle(s) => Error::Lifecycle(s.clone()),
             Error::Resource(s) => Error::Resource(s.clone()),
             Error::Tool(s) => Error::Tool(s.clone()),
             Error::Prompt(s) => Error::Prompt(s.clone()),
@@ -300,6 +306,8 @@ pub fn error_to_rpc_error(id: RequestId, error: &Error) -> JSONRPCError {
         Error::Json(err) => parse_error(id.clone(), &format!("JSON Error: {}", err)),
         Error::Protocol(msg) => internal_error(id.clone(), msg),
         Error::Transport(msg) => internal_error(id.clone(), msg),
+        Error::Lifecycle(msg) =>
+            standard_error_response(id.clone(), error_codes::CLIENT_NOT_INITIALIZED, msg),
         Error::Resource(msg) => resource_not_found_error(id.clone(), msg),
         Error::Validation(msg) => validation_error(id.clone(), msg),
         Error::Io(msg) => internal_error(id.clone(), &format!("IO Error: {}", msg)),
@@ -314,11 +322,41 @@ pub fn error_to_rpc_error(id: RequestId, error: &Error) -> JSONRPCError {
         Error::Initialization(msg) => internal_error(id.clone(), msg),
         Error::ServerUnavailable(msg) => internal_error(id.clone(), msg),
         Error::InvalidState(msg) => internal_error(id.clone(), msg),
-        Error::Other(msg) => internal_error(id.clone(), &format!("Other error: {}", msg)),
+        Error::Other(msg) => internal_error(id.clone(), msg),
     }
 }
 
 /// Helper to convert to an error message
 pub fn to_error_message(id: RequestId, error: &Error) -> JSONRPCMessage {
     JSONRPCMessage::Error(error_to_rpc_error(id, error))
+}
+
+/// Convert a JSONRPCError into the appropriate Error type
+pub fn rpc_error_to_error(error: &JSONRPCError) -> Error {
+    let code = error.error.code;
+    match code {
+        error_codes::METHOD_NOT_FOUND => Error::MethodNotFound(error.error.message.clone()),
+        error_codes::INVALID_PARAMS => Error::InvalidParams(error.error.message.clone()),
+        error_codes::RESOURCE_NOT_FOUND => Error::Resource(error.error.message.clone()),
+        error_codes::TOOL_NOT_FOUND => Error::Tool(error.error.message.clone()),
+        error_codes::TOOL_EXECUTION_ERROR => Error::Tool(error.error.message.clone()),
+        error_codes::PROMPT_NOT_FOUND => Error::Prompt(error.error.message.clone()),
+        error_codes::PROMPT_VALIDATION_ERROR => Error::Validation(error.error.message.clone()),
+        error_codes::AUTHENTICATION_ERROR => Error::Authentication(error.error.message.clone()),
+        error_codes::AUTHORIZATION_ERROR => Error::Authorization(error.error.message.clone()),
+        error_codes::RATE_LIMIT_EXCEEDED => Error::RateLimit(error.error.message.clone()),
+        error_codes::REQUEST_TIMEOUT => Error::Timeout(error.error.message.clone()),
+        error_codes::SERVER_NOT_INITIALIZED | error_codes::CLIENT_NOT_INITIALIZED =>
+            Error::Initialization(error.error.message.clone()),
+        error_codes::SERVER_UNAVAILABLE => Error::ServerUnavailable(error.error.message.clone()),
+        error_codes::SCHEMA_VALIDATION_ERROR =>
+            Error::SchemaValidation(error.error.message.clone()),
+        error_codes::INCOMPATIBLE_VERSION =>
+            Error::VersionIncompatibility(error.error.message.clone()),
+        error_codes::PARSE_ERROR | error_codes::INVALID_REQUEST | error_codes::INTERNAL_ERROR =>
+            Error::Protocol(error.error.message.clone()),
+        _ if code >= error_codes::SERVER_ERROR_START && code <= error_codes::SERVER_ERROR_END =>
+            Error::Protocol(error.error.message.clone()),
+        _ => Error::Other(format!("Unknown error code {}: {}", code, error.error.message)),
+    }
 }

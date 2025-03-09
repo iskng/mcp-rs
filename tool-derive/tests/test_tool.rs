@@ -1,4 +1,5 @@
 use mcp_rs::protocol::Tool;
+use mcp_rs::protocol::tools::ToToolSchema;
 use serde::{ Deserialize, Serialize };
 use tool_derive::Tool;
 
@@ -110,43 +111,52 @@ mod tests {
             operation: Operation::Add,
         };
 
-        let tool = calc.to_tool();
+        let tool = calc.to_tool_schema();
 
-        assert_eq!(tool.name, "calculator");
-        assert_eq!(tool.description, "Performs basic arithmetic");
+        assert_eq!(tool.name, "Calculator");
+        assert_eq!(tool.description.unwrap(), "Performs basic arithmetic");
 
-        // Check parameters - need to unwrap the Option<Vec<ToolParameter>>
-        let params = tool.parameters.as_ref().expect("Should have parameters");
-        assert_eq!(params.len(), 3);
+        let input_schema = tool.input_schema;
 
-        // Check a parameter
-        let a_param = params
-            .iter()
-            .find(|p| p.name == "a")
-            .unwrap();
-        assert_eq!(a_param.description.as_ref().unwrap(), "First operand");
-        assert!(matches!(a_param.type_name, ToolParameterType::Number));
-        assert!(a_param.required.unwrap_or(false));
+        let properties = input_schema.properties.expect("Should have properties");
+        assert_eq!(properties.len(), 3);
 
-        // Check enum parameter
-        let op_param = params
-            .iter()
-            .find(|p| p.name == "operation")
-            .unwrap();
-        assert_eq!(op_param.description.as_ref().unwrap(), "Operation to perform");
-        assert!(matches!(op_param.type_name, ToolParameterType::String));
-        assert!(op_param.required.unwrap_or(false));
+        let a_param = properties.get("a").expect("Should have 'a' parameter");
         assert_eq!(
-            op_param.enum_values.as_ref(),
-            Some(
-                &vec![
-                    "add".to_string(),
-                    "subtract".to_string(),
-                    "multiply".to_string(),
-                    "divide".to_string()
-                ]
-            )
+            a_param.get("description").and_then(|v| v.as_str()),
+            Some("First operand")
         );
+        assert_eq!(
+            a_param.get("type").and_then(|v| v.as_str()),
+            Some("number")
+        );
+
+        let op_param = properties.get("operation").expect("Should have 'operation' parameter");
+        assert_eq!(
+            op_param.get("description").and_then(|v| v.as_str()),
+            Some("Operation to perform")
+        );
+        assert_eq!(
+            op_param.get("type").and_then(|v| v.as_str()),
+            Some("string")
+        );
+
+        let enum_values = op_param
+            .get("enum")
+            .expect("Should have enum values")
+            .as_array()
+            .expect("enum should be an array");
+        assert_eq!(enum_values.len(), 4);
+        assert!(enum_values.iter().any(|v| v.as_str() == Some("add")));
+        assert!(enum_values.iter().any(|v| v.as_str() == Some("subtract")));
+        assert!(enum_values.iter().any(|v| v.as_str() == Some("multiply")));
+        assert!(enum_values.iter().any(|v| v.as_str() == Some("divide")));
+
+        let required = input_schema.required.expect("Should have required fields");
+        assert_eq!(required.len(), 3);
+        assert!(required.contains(&"a".to_string()));
+        assert!(required.contains(&"b".to_string()));
+        assert!(required.contains(&"operation".to_string()));
     }
 
     // Test WeatherConverter conversion
@@ -157,26 +167,38 @@ mod tests {
             unit: TemperatureUnit::Celsius,
         };
 
-        let tool = converter.to_tool();
+        let tool = converter.to_tool_schema();
 
-        assert_eq!(tool.name, "weather_converter");
-        assert_eq!(tool.description, "Converts temperature between units");
+        assert_eq!(tool.name, "WeatherConverter");
+        assert_eq!(tool.description.unwrap(), "Converts temperature between units");
 
-        // Check parameters - need to unwrap the Option<Vec<ToolParameter>>
-        let params = tool.parameters.as_ref().expect("Should have parameters");
-        assert_eq!(params.len(), 2);
+        let input_schema = tool.input_schema;
 
-        // Check enum parameter
-        let unit_param = params
-            .iter()
-            .find(|p| p.name == "unit")
-            .unwrap();
-        assert_eq!(unit_param.description.as_ref().unwrap(), "Temperature unit");
-        assert!(matches!(unit_param.type_name, ToolParameterType::String));
-        assert!(unit_param.required.unwrap_or(false));
+        let properties = input_schema.properties.expect("Should have properties");
+        assert_eq!(properties.len(), 2);
+
+        let unit_param = properties.get("unit").expect("Should have 'unit' parameter");
         assert_eq!(
-            unit_param.enum_values.as_ref(),
-            Some(&vec!["celsius".to_string(), "fahrenheit".to_string()])
+            unit_param.get("description").and_then(|v| v.as_str()),
+            Some("Temperature unit")
         );
+        assert_eq!(
+            unit_param.get("type").and_then(|v| v.as_str()),
+            Some("string")
+        );
+
+        let enum_values = unit_param
+            .get("enum")
+            .expect("Should have enum values")
+            .as_array()
+            .expect("enum should be an array");
+        assert_eq!(enum_values.len(), 2);
+        assert!(enum_values.iter().any(|v| v.as_str() == Some("celsius")));
+        assert!(enum_values.iter().any(|v| v.as_str() == Some("fahrenheit")));
+
+        let required = input_schema.required.expect("Should have required fields");
+        assert_eq!(required.len(), 2);
+        assert!(required.contains(&"temperature".to_string()));
+        assert!(required.contains(&"unit".to_string()));
     }
 }

@@ -5,7 +5,6 @@ use std::sync::Arc;
 use std::task::{ Context, Poll };
 use tokio::sync::{ Mutex, mpsc };
 use tower::{ Layer, Service };
-use tracing::debug;
 use uuid::Uuid;
 
 /// Represents a client session with its message channel

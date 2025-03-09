@@ -1,7 +1,7 @@
 extern crate proc_macro;
 use proc_macro::TokenStream;
-use quote::{ quote, format_ident };
-use syn::{ parse_macro_input, DeriveInput, Data, DataStruct, Fields, Meta, Lit, Field, Type };
+use quote::quote;
+use syn::{ parse_macro_input, DeriveInput, Data, DataStruct, Fields, Lit, Field, Type };
 
 /// Derive macro for implementing a tool from a struct
 ///
@@ -55,7 +55,8 @@ pub fn derive_tool(input: TokenStream) -> TokenStream {
 
     // Generate code for each parameter based on the struct fields
     let params = fields.iter().map(|field| {
-        let field_name = field.ident.as_ref().expect("Named field expected").to_string();
+        let field_ident = field.ident.as_ref().expect("Named field expected");
+        let field_name = field_ident.to_string();
 
         // Default parameter description and required flag
         let mut description = format!("Parameter: {}", field_name);
@@ -83,9 +84,11 @@ pub fn derive_tool(input: TokenStream) -> TokenStream {
                         let lit: Lit = value.parse()?;
                         if let Lit::Str(s) = lit {
                             let values_str = s.value();
+                            // Parse the enum values and ensure first letter is capitalized
                             let parsed_values = values_str
                                 .split(',')
                                 .map(|s| s.trim().to_string())
+                                .map(|s| capitalize_first_letter(&s))
                                 .collect::<Vec<_>>();
 
                             if !parsed_values.is_empty() {
@@ -98,41 +101,80 @@ pub fn derive_tool(input: TokenStream) -> TokenStream {
             }
         }
 
-        // Determine parameter type
+        // Determine parameter type and build the appropriate parameter
         let (param_type, is_enum_type, _) = get_parameter_info_for_field(field);
 
-        // Generate code to build this parameter
-        let param_builder = if let Some(enum_vals) = explicit_enum_values {
-            // If explicit enum values are provided, use them
+        if let Some(enum_vals) = explicit_enum_values {
+            // For use in deserializing, we need only capitalized values in the schema
+            let deserialization_values: Vec<String> = enum_vals.clone();
+
+            // For enum parameters, use add_enum_parameter with capitalized values only
             quote! {
-                ::mcp_rs::typess::tools::ToolParameterBuilder::new(#field_name, #param_type)
-                    .description(#description)
-                    .required(#required)
-                    .enum_values(vec![#(#enum_vals),*])
-                    .build()
+                builder = builder.add_enum_parameter(
+                    #field_name,
+                    #description,
+                    &[#(#deserialization_values),*],
+                    #required
+                );
+            }
+        } else if param_type.to_string().contains("String") {
+            // For string parameters
+            quote! {
+                builder = builder.add_string_parameter(
+                    #field_name,
+                    #description,
+                    #required
+                );
+            }
+        } else if param_type.to_string().contains("Number") {
+            // For number parameters
+            quote! {
+                builder = builder.add_number_parameter(
+                    #field_name,
+                    #description,
+                    #required
+                );
+            }
+        } else if param_type.to_string().contains("Boolean") {
+            // For boolean parameters
+            quote! {
+                builder = builder.add_boolean_parameter(
+                    #field_name,
+                    #description,
+                    #required
+                );
+            }
+        } else if param_type.to_string().contains("Array") {
+            // For array parameters (using string as default item type)
+            quote! {
+                builder = builder.add_array_parameter(
+                    #field_name,
+                    #description,
+                    "string",
+                    #required
+                );
             }
         } else {
-            // For all other types, just use the basic builder without enum values
+            // For other types, default to string
             quote! {
-                ::mcp_rs::typess::tools::ToolParameterBuilder::new(#field_name, #param_type)
-                    .description(#description)
-                    .required(#required)
-                    .build()
+                builder = builder.add_string_parameter(
+                    #field_name,
+                    #description,
+                    #required
+                );
             }
-        };
-
-        // Return the code to add this parameter
-        quote! {
-            builder = builder.add_parameter(#param_builder);
         }
     });
 
-    // Generate code for the Tool trait implementation
+    // Generate code for deserializer that will handle both lowercase and capitalized enum values
+    let mut enum_field_deserializers = quote! {};
+
+    // Generate code for the ToToolSchema trait implementation
     let expanded =
         quote! {
-        impl ::mcp_rs::typess::tools::ToTool for #name {
-            fn to_tool(&self) -> ::mcp_rs::typess::tools::Tool {
-                let mut builder = ::mcp_rs::typess::tools::ToolBuilder::new(#name_str, #tool_description);
+        impl ::mcp_rs::protocol::tools::ToToolSchema for #name {
+            fn to_tool_schema(&self) -> ::mcp_rs::protocol::Tool {
+                let mut builder = ::mcp_rs::protocol::tools::ToolBuilder::new(#name_str, #tool_description);
                 
                 // Add all parameters
                 #(#params)*
@@ -140,12 +182,8 @@ pub fn derive_tool(input: TokenStream) -> TokenStream {
                 builder.build()
             }
         }
-        
-        impl ::mcp_rs::typess::tools::EnumValues for #name {
-            fn enum_values() -> Vec<String> {
-                vec![]
-            }
-        }
+
+        #enum_field_deserializers
     };
 
     // Return the generated impl
@@ -163,11 +201,7 @@ fn get_parameter_info_for_field(
                 let type_name = segment.ident.to_string();
 
                 if type_name == "String" || type_name == "str" {
-                    (
-                        quote! { ::mcp_rs::typess::tools::ToolParameterType::String },
-                        false,
-                        Some(type_path.clone()),
-                    )
+                    (quote! { ::mcp_rs::protocol::tools::String }, false, Some(type_path.clone()))
                 } else if
                     type_name == "i8" ||
                     type_name == "i16" ||
@@ -180,45 +214,25 @@ fn get_parameter_info_for_field(
                     type_name == "f32" ||
                     type_name == "f64"
                 {
-                    (
-                        quote! { ::mcp_rs::typess::tools::ToolParameterType::Number },
-                        false,
-                        Some(type_path.clone()),
-                    )
+                    (quote! { ::mcp_rs::protocol::tools::Number }, false, Some(type_path.clone()))
                 } else if type_name == "bool" {
-                    (
-                        quote! { ::mcp_rs::typess::tools::ToolParameterType::Boolean },
-                        false,
-                        Some(type_path.clone()),
-                    )
+                    (quote! { ::mcp_rs::protocol::tools::Boolean }, false, Some(type_path.clone()))
                 } else if type_name == "Vec" {
-                    (
-                        quote! { ::mcp_rs::typess::tools::ToolParameterType::Array },
-                        false,
-                        Some(type_path.clone()),
-                    )
+                    (quote! { ::mcp_rs::protocol::tools::Array }, false, Some(type_path.clone()))
                 } else if type_name == "HashMap" || type_name == "BTreeMap" {
-                    (
-                        quote! { ::mcp_rs::typess::tools::ToolParameterType::Object },
-                        false,
-                        Some(type_path.clone()),
-                    )
+                    (quote! { ::mcp_rs::protocol::tools::Object }, false, Some(type_path.clone()))
                 } else {
                     // Assume it's an enum (or other object type)
-                    (
-                        quote! { ::mcp_rs::typess::tools::ToolParameterType::String },
-                        true,
-                        Some(type_path.clone()),
-                    )
+                    (quote! { ::mcp_rs::protocol::tools::String }, true, Some(type_path.clone()))
                 }
             } else {
                 // Default to Object if we can't determine
-                (quote! { ::mcp_rs::typess::tools::ToolParameterType::Object }, false, None)
+                (quote! { ::mcp_rs::protocol::tools::Object }, false, None)
             }
         }
         _ => {
             // Default to Object for complex types
-            (quote! { ::mcp_rs::typess::tools::ToolParameterType::Object }, false, None)
+            (quote! { ::mcp_rs::protocol::tools::Object }, false, None)
         }
     }
 }
@@ -233,6 +247,15 @@ fn to_snake_case(s: &str) -> String {
         result.push(c.to_lowercase().next().unwrap());
     }
     result
+}
+
+/// Helper function to capitalize the first letter of a string
+fn capitalize_first_letter(s: &str) -> String {
+    let mut chars = s.chars();
+    match chars.next() {
+        None => String::new(),
+        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+    }
 }
 
 #[cfg(test)]

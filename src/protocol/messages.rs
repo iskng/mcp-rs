@@ -985,3 +985,300 @@ impl fmt::Display for JSONRPCMessage {
         }
     }
 }
+
+impl Message {
+    /// Convert a protocol Message into a JSON-RPC message
+    ///
+    /// This is the inverse operation of JSONRPCMessage::into_message().
+    /// It takes a strongly-typed protocol Message and converts it into
+    /// a lower-level JSONRPCMessage representation that can be serialized
+    /// for network transmission.
+    ///
+    /// The id parameter is used for the request ID when creating a request message.
+    /// For response messages, the ID from the result struct is used instead.
+    pub fn from_message(self, id: RequestId) -> Result<JSONRPCMessage, serde_json::Error> {
+        match self {
+            Message::Client(client_msg) =>
+                match client_msg {
+                    ClientMessage::Request(req) => {
+                        let (method, params) = match req {
+                            ClientRequest::Initialize(r) =>
+                                ("initialize", serde_json::to_value(r)?),
+                            ClientRequest::Ping(r) => ("ping", serde_json::to_value(r)?),
+                            ClientRequest::ListResources(r) =>
+                                ("resources/list", serde_json::to_value(r)?),
+                            ClientRequest::ListResourceTemplates(r) =>
+                                ("resources/templates/list", serde_json::to_value(r)?),
+                            ClientRequest::ReadResource(r) =>
+                                ("resources/read", serde_json::to_value(r)?),
+                            ClientRequest::Subscribe(r) =>
+                                ("resources/subscribe", serde_json::to_value(r)?),
+                            ClientRequest::Unsubscribe(r) =>
+                                ("resources/unsubscribe", serde_json::to_value(r)?),
+                            ClientRequest::ListPrompts(r) =>
+                                ("prompts/list", serde_json::to_value(r)?),
+                            ClientRequest::GetPrompt(r) =>
+                                ("prompts/get", serde_json::to_value(r)?),
+                            ClientRequest::ListTools(r) => ("tools/list", serde_json::to_value(r)?),
+                            ClientRequest::CallTool(r) => ("tools/call", serde_json::to_value(r)?),
+                            ClientRequest::SetLevel(r) =>
+                                ("logging/setLevel", serde_json::to_value(r)?),
+                            ClientRequest::Complete(r) =>
+                                ("completion/complete", serde_json::to_value(r)?),
+                        };
+
+                        // Extract params from the serialized value
+                        let params = match params {
+                            serde_json::Value::Object(mut map) => {
+                                // Remove the method field if it exists
+                                map.remove("method");
+                                if map.is_empty() {
+                                    None
+                                } else {
+                                    Some(serde_json::Value::Object(map))
+                                }
+                            }
+                            _ => Some(params),
+                        };
+
+                        Ok(
+                            JSONRPCMessage::Request(JSONRPCRequest {
+                                jsonrpc: "2.0".to_string(),
+                                id: id.clone(),
+                                method: method.to_string(),
+                                params,
+                            })
+                        )
+                    }
+                    ClientMessage::Notification(notification) => {
+                        let (method, params) = match notification {
+                            ClientNotification::Cancelled(n) =>
+                                ("notifications/cancelled", serde_json::to_value(n)?),
+                            ClientNotification::Initialized(n) =>
+                                ("notifications/initialized", serde_json::to_value(n)?),
+                            ClientNotification::Progress(n) =>
+                                ("notifications/progress", serde_json::to_value(n)?),
+                            ClientNotification::RootsListChanged(n) =>
+                                ("notifications/roots/list_changed", serde_json::to_value(n)?),
+                        };
+
+                        // Extract params from the serialized value
+                        let params = match params {
+                            serde_json::Value::Object(mut map) => {
+                                // Remove the method field if it exists
+                                map.remove("method");
+                                if map.is_empty() {
+                                    None
+                                } else {
+                                    Some(serde_json::Value::Object(map))
+                                }
+                            }
+                            _ => Some(params),
+                        };
+
+                        Ok(
+                            JSONRPCMessage::Notification(JSONRPCNotification {
+                                jsonrpc: "2.0".to_string(),
+                                method: method.to_string(),
+                                params,
+                            })
+                        )
+                    }
+                    ClientMessage::Result(result) => {
+                        let (method, params) = match result {
+                            ClientResult::CreateMessage(r) =>
+                                ("sampling/createMessage", serde_json::to_value(r)?),
+                            ClientResult::ListRoots(r) => ("roots/list", serde_json::to_value(r)?),
+                            ClientResult::Empty(r) => ("ping", serde_json::to_value(r)?),
+                        };
+
+                        // Extract the ID from the value
+                        let value_obj = params
+                            .as_object()
+                            .ok_or_else(||
+                                serde_json::Error::custom("Expected object for result")
+                            )?;
+
+                        // Get the ID from the result object
+                        let result_id = match value_obj.get("id") {
+                            Some(id) => serde_json::from_value(id.clone())?,
+                            None => {
+                                return Err(serde_json::Error::custom("Missing ID in result"));
+                            }
+                        };
+
+                        // Extract result fields
+                        let result_value = match params {
+                            serde_json::Value::Object(mut map) => {
+                                // Remove id and jsonrpc fields if they exist
+                                map.remove("id");
+                                map.remove("jsonrpc");
+                                // Remove the method field if it exists
+                                map.remove("method");
+                                serde_json::Value::Object(map)
+                            }
+                            _ => params,
+                        };
+
+                        Ok(
+                            JSONRPCMessage::Response(JSONRPCResponse {
+                                jsonrpc: "2.0".to_string(),
+                                id: result_id,
+                                result: ProtocolResult {
+                                    _meta: None,
+                                    content: result_value.as_object().map_or_else(
+                                        || {
+                                            let mut map = HashMap::new();
+                                            map.insert("result".to_string(), result_value.clone());
+                                            map
+                                        },
+                                        |obj| obj.clone().into_iter().collect()
+                                    ),
+                                },
+                            })
+                        )
+                    }
+                }
+            Message::Server(server_msg) =>
+                match server_msg {
+                    ServerMessage::Request(req) => {
+                        let (method, params) = match req {
+                            ServerRequest::Ping(r) => ("ping", serde_json::to_value(r)?),
+                            ServerRequest::CreateMessage(r) =>
+                                ("sampling/createMessage", serde_json::to_value(r)?),
+                            ServerRequest::ListRoots(r) => ("roots/list", serde_json::to_value(r)?),
+                        };
+
+                        // Extract params from the serialized value
+                        let params = match params {
+                            serde_json::Value::Object(mut map) => {
+                                // Remove the method field if it exists
+                                map.remove("method");
+                                if map.is_empty() {
+                                    None
+                                } else {
+                                    Some(serde_json::Value::Object(map))
+                                }
+                            }
+                            _ => Some(params),
+                        };
+
+                        Ok(
+                            JSONRPCMessage::Request(JSONRPCRequest {
+                                jsonrpc: "2.0".to_string(),
+                                id: id.clone(),
+                                method: method.to_string(),
+                                params,
+                            })
+                        )
+                    }
+                    ServerMessage::Notification(notification) => {
+                        let (method, params) = match notification {
+                            ServerNotification::Cancelled(n) =>
+                                ("notifications/cancelled", serde_json::to_value(n)?),
+                            ServerNotification::Progress(n) =>
+                                ("notifications/progress", serde_json::to_value(n)?),
+                            ServerNotification::ResourceListChanged(n) =>
+                                ("notifications/resources/list_changed", serde_json::to_value(n)?),
+                            ServerNotification::ResourceUpdated(n) =>
+                                ("notifications/resources/updated", serde_json::to_value(n)?),
+                            ServerNotification::PromptListChanged(n) =>
+                                ("notifications/prompts/list_changed", serde_json::to_value(n)?),
+                            ServerNotification::ToolListChanged(n) =>
+                                ("notifications/tools/list_changed", serde_json::to_value(n)?),
+                            ServerNotification::LoggingMessage(n) =>
+                                ("notifications/logging/message", serde_json::to_value(n)?),
+                        };
+
+                        // Extract params from the serialized value
+                        let params = match params {
+                            serde_json::Value::Object(mut map) => {
+                                // Remove the method field if it exists
+                                map.remove("method");
+                                if map.is_empty() {
+                                    None
+                                } else {
+                                    Some(serde_json::Value::Object(map))
+                                }
+                            }
+                            _ => Some(params),
+                        };
+
+                        Ok(
+                            JSONRPCMessage::Notification(JSONRPCNotification {
+                                jsonrpc: "2.0".to_string(),
+                                method: method.to_string(),
+                                params,
+                            })
+                        )
+                    }
+                    ServerMessage::Result(result) => {
+                        let (method, params) = match result {
+                            ServerResult::Initialize(r) => ("initialize", serde_json::to_value(r)?),
+                            ServerResult::ListResources(r) =>
+                                ("resources/list", serde_json::to_value(r)?),
+                            ServerResult::ListResourceTemplates(r) =>
+                                ("resources/templates/list", serde_json::to_value(r)?),
+                            ServerResult::ReadResource(r) =>
+                                ("resources/read", serde_json::to_value(r)?),
+                            ServerResult::ListPrompts(r) =>
+                                ("prompts/list", serde_json::to_value(r)?),
+                            ServerResult::GetPrompt(r) => ("prompts/get", serde_json::to_value(r)?),
+                            ServerResult::ListTools(r) => ("tools/list", serde_json::to_value(r)?),
+                            ServerResult::CallTool(r) => ("tools/call", serde_json::to_value(r)?),
+                            ServerResult::Complete(r) =>
+                                ("completion/complete", serde_json::to_value(r)?),
+                            ServerResult::Empty(r) => ("ping", serde_json::to_value(r)?),
+                        };
+
+                        // Extract the ID from the value
+                        let value_obj = params
+                            .as_object()
+                            .ok_or_else(||
+                                serde_json::Error::custom("Expected object for result")
+                            )?;
+
+                        // Get the ID from the result object
+                        let result_id = match value_obj.get("id") {
+                            Some(id) => serde_json::from_value(id.clone())?,
+                            None => {
+                                return Err(serde_json::Error::custom("Missing ID in result"));
+                            }
+                        };
+
+                        // Extract result fields
+                        let result_value = match params {
+                            serde_json::Value::Object(mut map) => {
+                                // Remove id and jsonrpc fields if they exist
+                                map.remove("id");
+                                map.remove("jsonrpc");
+                                // Remove the method field if it exists
+                                map.remove("method");
+                                serde_json::Value::Object(map)
+                            }
+                            _ => params,
+                        };
+
+                        Ok(
+                            JSONRPCMessage::Response(JSONRPCResponse {
+                                jsonrpc: "2.0".to_string(),
+                                id: result_id,
+                                result: ProtocolResult {
+                                    _meta: None,
+                                    content: result_value.as_object().map_or_else(
+                                        || {
+                                            let mut map = HashMap::new();
+                                            map.insert("result".to_string(), result_value.clone());
+                                            map
+                                        },
+                                        |obj| obj.clone().into_iter().collect()
+                                    ),
+                                },
+                            })
+                        )
+                    }
+                }
+            Message::Error(error) => { Ok(JSONRPCMessage::Error(error)) }
+        }
+    }
+}

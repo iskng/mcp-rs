@@ -5,7 +5,6 @@
 
 pub mod resources;
 pub mod tools;
-use crate::protocol::{ Error, PROTOCOL_VERSION };
 use crate::server::services::resources::ResourceRegistry;
 use crate::server::services::tools::ToolRegistry;
 use std::sync::Arc;

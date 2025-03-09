@@ -1,6 +1,13 @@
-use crate::protocol::Error;
+use base64::{ prelude::BASE64_STANDARD, Engine };
+
 use crate::protocol::{
-    Content, ImageContent, Prompt, PromptArgument, PromptMessage, PromptReference, Role,
+    Content,
+    ImageContent,
+    Prompt,
+    PromptArgument,
+    PromptMessage,
+    PromptReference,
+    Role,
     TextContent,
 };
 use std::collections::HashMap;
@@ -9,7 +16,7 @@ use std::collections::HashMap;
 pub fn create_prompt(
     name: &str,
     description: Option<&str>,
-    arguments: Option<Vec<PromptArgument>>,
+    arguments: Option<Vec<PromptArgument>>
 ) -> Prompt {
     Prompt {
         name: name.to_string(),
@@ -22,7 +29,7 @@ pub fn create_prompt(
 pub fn create_prompt_argument(
     name: &str,
     description: Option<&str>,
-    required: Option<bool>,
+    required: Option<bool>
 ) -> PromptArgument {
     PromptArgument {
         name: name.to_string(),
@@ -52,7 +59,7 @@ pub fn create_user_text_message(text: &str) -> PromptMessage {
             type_field: "text".to_string(),
             text: text.to_string(),
             annotations: None,
-        }),
+        })
     )
 }
 
@@ -64,7 +71,7 @@ pub fn create_assistant_text_message(text: &str) -> PromptMessage {
             type_field: "text".to_string(),
             text: text.to_string(),
             annotations: None,
-        }),
+        })
     )
 }
 
@@ -74,10 +81,10 @@ pub fn create_image_message(role: Role, data: &[u8], mime_type: &str) -> PromptM
         role,
         Content::Image(ImageContent {
             type_field: "image".to_string(),
-            data: base64::encode(data),
+            data: BASE64_STANDARD.encode(data),
             mime_type: mime_type.to_string(),
             annotations: None,
-        }),
+        })
     )
 }
 
@@ -96,7 +103,7 @@ pub fn apply_template_variables(template: &str, variables: &HashMap<String, Stri
 /// Apply template variables to a prompt message
 pub fn apply_variables_to_message(
     message: &PromptMessage,
-    variables: &HashMap<String, String>,
+    variables: &HashMap<String, String>
 ) -> PromptMessage {
     match &message.content {
         Content::Text(text_content) => {

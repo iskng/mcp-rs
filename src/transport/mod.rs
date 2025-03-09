@@ -2,16 +2,16 @@
 //!
 //! This module defines the Transport trait and various implementations,
 //! such as SSE and STDIO transports.
+pub mod middleware;
+pub mod sse_server;
+pub mod stdio;
+pub mod sse;
 
 use async_trait::async_trait;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::Mutex;
-use tokio::task::JoinHandle;
-
 use crate::protocol::errors::Error;
 use crate::protocol::JSONRPCMessage;
-use crate::server::handlers::RouteHandler;
 use crate::server::server::AppState;
 
 /// Handler for messages from the transport
@@ -33,10 +33,6 @@ pub trait TransportMessageHandler: Send + Sync {
         message: &JSONRPCMessage
     ) -> Result<Option<JSONRPCMessage>, Error>;
 }
-
-pub mod middleware;
-pub mod sse_server;
-pub mod stdio;
 
 /// Factory for creating transports
 #[derive(Clone)]
@@ -91,4 +87,42 @@ pub trait DirectIOTransport: Transport {
 
     /// Send a message to the transport
     async fn send(&mut self, message: &JSONRPCMessage) -> Result<(), Error>;
+}
+
+/// BoxedDirectIOTransport is a wrapper around Box<dyn DirectIOTransport>
+/// that implements DirectIOTransport
+pub struct BoxedDirectIOTransport(pub Box<dyn DirectIOTransport + 'static>);
+
+#[async_trait]
+impl Transport for BoxedDirectIOTransport {
+    async fn start(&mut self) -> Result<(), Error> {
+        self.0.start().await
+    }
+
+    async fn close(&mut self) -> Result<(), Error> {
+        self.0.close().await
+    }
+
+    async fn is_connected(&self) -> bool {
+        self.0.is_connected().await
+    }
+
+    async fn send_to(&mut self, client_id: &str, message: &JSONRPCMessage) -> Result<(), Error> {
+        self.0.send_to(client_id, message).await
+    }
+
+    async fn set_app_state(&mut self, app_state: Arc<AppState>) {
+        self.0.set_app_state(app_state).await
+    }
+}
+
+#[async_trait]
+impl DirectIOTransport for BoxedDirectIOTransport {
+    async fn receive(&mut self) -> Result<(Option<String>, JSONRPCMessage), Error> {
+        self.0.receive().await
+    }
+
+    async fn send(&mut self, message: &JSONRPCMessage) -> Result<(), Error> {
+        self.0.send(message).await
+    }
 }

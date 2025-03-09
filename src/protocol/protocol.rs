@@ -180,10 +180,12 @@ pub struct EmptyResult {
 }
 
 /// A uniquely identifying ID for a request in JSON-RPC.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(untagged)]
 pub enum RequestId {
+    /// String identifier for a request
     String(String),
+    /// Numeric identifier for a request
     Number(i64),
 }
 

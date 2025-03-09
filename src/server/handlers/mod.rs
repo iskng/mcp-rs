@@ -3,8 +3,6 @@
 //! This module contains handler traits and implementations for processing
 //! client messages and dispatching them to appropriate domain-specific handlers.
 
-// Core handlers
-mod base;
 // Server handler interface
 mod route_handler;
 pub use route_handler::RouteHandler;

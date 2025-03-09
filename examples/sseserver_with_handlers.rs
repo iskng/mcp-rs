@@ -4,29 +4,10 @@
 //! with the redesigned transport interface.
 
 use mcp_rs::{
-    protocol::{
-        Error,
-        Tool,
-        CallToolParams,
-        CallToolResult,
-        tools::{ ToolBuilder, CallToolResultBuilder },
-        ToolsCapability,
-        ResourcesCapability,
-    },
-    server::{
-        Server,
-        handlers::composite::CompositeServerHandler,
-        services::{
-            ServiceProvider,
-            resources::resource_registry::ResourceRegistry,
-            tools::tool_registry::ToolRegistry,
-        },
-    },
+    protocol::{ Error, CallToolParams, CallToolResult, tools::ToolBuilder },
+    server::Server,
     transport::sse_server::{ SseServerTransport, SseServerOptions },
 };
-use std::sync::Arc;
-use serde_json::json;
-use std::collections::HashMap;
 use tracing_subscriber;
 
 #[tokio::main]
@@ -46,7 +27,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_server_version("0.1.0")
         .with_instructions("This is an example server with a calculator tool.")
         .register_in_process_tool(
-            ToolBuilder::new("calculator", "Basic calculator")
+            ToolBuilder::new("Calculator", "Basic calculator")
                 .add_number_parameter("a", "First number", true)
                 .add_number_parameter("b", "Second number", true)
                 .add_enum_parameter(

@@ -149,11 +149,12 @@ class McpClient:
             return None
         
         try:
+            
             # Use the operation as provided (from the schema)
             # No need to modify the case since we're now using values directly from the schema
             log.info(f"Calling calculator tool: {operation}({a}, {b})...")
             result = await self.session.call_tool(
-                "calculator", 
+                "Calculator", 
                 {
                     "operation": operation,
                     "a": a,
@@ -343,9 +344,10 @@ class McpClient:
                 # Check if the calculator tool is available
                 calculator_tool = None
                 for tool in tools_result.tools:
-                    if tool.name == "calculator":
+                    if tool.name == "calculator" or tool.name == "Calculator":
                         calculator_tool = tool
                         break
+
                 
                 if calculator_tool:
                     log.info(f"Found calculator tool: {calculator_tool.description}")

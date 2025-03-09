@@ -3,7 +3,6 @@ use crate::protocol::{
     CallToolParams,
     Cursor,
     GetPromptParams,
-    ImageContent,
     InitializeParams,
     JSONRPCMessage,
     JSONRPCRequest,
@@ -15,8 +14,6 @@ use crate::protocol::{
     Result as ProtocolResult,
     Tool,
 };
-use base64::prelude::BASE64_STANDARD;
-use base64::Engine;
 use serde_json::Value;
 use std::collections::HashMap;
 

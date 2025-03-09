@@ -5,16 +5,14 @@
 //! the crate.
 
 use crate::protocol::errors::Error;
-use crate::protocol::{
-    ErrorData, JSONRPCMessage as Message, JSONRPCResponse as Response, Result as ResponseOutcome,
-};
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
+
+use serde::{ Deserialize, Serialize, de::DeserializeOwned };
 use serde_json::Value;
 use std::future::Future;
 use std::str::FromStr;
 use std::time::Duration;
 use tokio::time::timeout as tokio_timeout;
-use tracing::{debug, trace, warn};
+use tracing::debug;
 use url::Url;
 
 //=============================================================================
@@ -42,9 +40,11 @@ pub mod json {
 
     /// Extract a field from a JSON Value as a specific type
     pub fn extract_field<T: DeserializeOwned>(value: &Value, field: &str) -> Result<T, Error> {
-        let field_value = value.get(field).ok_or_else(|| {
-            Error::Protocol(format!("Field '{}' not found in JSON object", field))
-        })?;
+        let field_value = value
+            .get(field)
+            .ok_or_else(|| {
+                Error::Protocol(format!("Field '{}' not found in JSON object", field))
+            })?;
 
         serde_json::from_value(field_value.clone()).map_err(Error::Json)
     }
@@ -164,15 +164,11 @@ pub mod async_utils {
 
     /// Run a future with a timeout
     pub async fn timeout<F, T>(duration: Duration, future: F) -> Result<T, Error>
-    where
-        F: Future<Output = Result<T, Error>>,
+        where F: Future<Output = Result<T, Error>>
     {
         match tokio_timeout(duration, future).await {
             Ok(result) => result,
-            Err(_) => Err(Error::Other(format!(
-                "Operation timed out after {:?}",
-                duration
-            ))),
+            Err(_) => Err(Error::Other(format!("Operation timed out after {:?}", duration))),
         }
     }
 
@@ -180,11 +176,10 @@ pub mod async_utils {
     pub async fn retry<F, Fut, T>(
         operation: F,
         max_attempts: usize,
-        initial_backoff: Duration,
-    ) -> Result<T, Error>
-    where
-        F: Fn() -> Fut,
-        Fut: Future<Output = Result<T, Error>>,
+        initial_backoff: Duration
+    )
+        -> Result<T, Error>
+        where F: Fn() -> Fut, Fut: Future<Output = Result<T, Error>>
     {
         let mut attempts = 0;
         let mut backoff = initial_backoff;
@@ -200,10 +195,7 @@ pub mod async_utils {
                         return Err(error);
                     }
 
-                    debug!(
-                        "Retry attempt {}/{} failed: {}",
-                        attempts, max_attempts, error
-                    );
+                    debug!("Retry attempt {}/{} failed: {}", attempts, max_attempts, error);
                     tokio::time::sleep(backoff).await;
                     backoff *= 2; // Exponential backoff
                 }
@@ -213,12 +205,11 @@ pub mod async_utils {
 
     /// Cancel a future after a specified duration
     pub async fn with_timeout<F, T>(future: F, duration: Duration) -> Result<T, Error>
-    where
-        F: Future<Output = T>,
+        where F: Future<Output = T>
     {
-        tokio_timeout(duration, future)
-            .await
-            .map_err(|_| Error::Other(format!("Operation timed out after {:?}", duration)))
+        tokio_timeout(duration, future).await.map_err(|_|
+            Error::Other(format!("Operation timed out after {:?}", duration))
+        )
     }
 }
 
@@ -239,11 +230,17 @@ pub mod schema {
     use crate::protocol::ReadResourceResult;
     use crate::protocol::errors::Error;
     use crate::protocol::{
-        CallToolParams, CallToolResult, InitializeResult, ListPromptsResult, ListResourcesResult,
+        CallToolParams,
+        CallToolResult,
+        InitializeResult,
+        ListPromptsResult,
+        ListResourcesResult,
         ListToolsResult,
     };
     use crate::protocol::{
-        JSONRPCMessage as Message, JSONRPCRequest as Request, JSONRPCResponse as Response,
+        JSONRPCMessage as Message,
+        JSONRPCRequest as Request,
+        JSONRPCResponse as Response,
     };
 
     // Static reference to compiled full schema
@@ -257,17 +254,19 @@ pub mod schema {
 
         // Try to use the embedded schema if available
         let schema_content = include_str!("../src/protocol/protocol.json");
-        let schema_value: Value = serde_json::from_str(schema_content)
+        let schema_value: Value = serde_json
+            ::from_str(schema_content)
             .map_err(|e| Error::SchemaValidation(format!("Failed to parse schema.json: {}", e)))?;
 
         // Compile the schema
-        let compiled = JSONSchema::compile(&schema_value)
-            .map_err(|e| Error::SchemaValidation(format!("Failed to compile schema: {}", e)))?;
+        let compiled = JSONSchema::compile(&schema_value).map_err(|e|
+            Error::SchemaValidation(format!("Failed to compile schema: {}", e))
+        )?;
 
         // Store the compiled schema
-        FULL_SCHEMA
-            .set(compiled)
-            .map_err(|_| Error::SchemaValidation("Failed to set compiled schema".to_string()))?;
+        FULL_SCHEMA.set(compiled).map_err(|_|
+            Error::SchemaValidation("Failed to set compiled schema".to_string())
+        )?;
 
         Ok(())
     }
@@ -278,10 +277,11 @@ pub mod schema {
             let validation = schema.validate(value);
             if let Err(errors) = validation {
                 let error_msgs: Vec<String> = errors.map(|e| format!("{}", e)).collect();
-                return Err(Error::SchemaValidation(format!(
-                    "Schema validation failed: {}",
-                    error_msgs.join(", ")
-                )));
+                return Err(
+                    Error::SchemaValidation(
+                        format!("Schema validation failed: {}", error_msgs.join(", "))
+                    )
+                );
             }
             Ok(())
         } else {
@@ -298,7 +298,8 @@ pub mod schema {
             return Ok(());
         }
 
-        let json_value = serde_json::to_value(request)
+        let json_value = serde_json
+            ::to_value(request)
             .map_err(|e| Error::SchemaValidation(format!("Failed to serialize request: {}", e)))?;
 
         validate_against_full_schema(&json_value)
@@ -312,7 +313,8 @@ pub mod schema {
             return Ok(());
         }
 
-        let json_value = serde_json::to_value(response)
+        let json_value = serde_json
+            ::to_value(response)
             .map_err(|e| Error::SchemaValidation(format!("Failed to serialize response: {}", e)))?;
 
         validate_against_full_schema(&json_value)
@@ -326,7 +328,8 @@ pub mod schema {
             return Ok(());
         }
 
-        let json_value = serde_json::to_value(message)
+        let json_value = serde_json
+            ::to_value(message)
             .map_err(|e| Error::SchemaValidation(format!("Failed to serialize message: {}", e)))?;
 
         validate_against_full_schema(&json_value)
@@ -338,15 +341,9 @@ pub mod schema {
         REGISTRY.get_or_init(|| {
             let mut registry = HashMap::new();
 
-            registry.insert(
-                "resources/read".to_string(),
-                generate_schema::<ReadResourceParams>(),
-            );
+            registry.insert("resources/read".to_string(), generate_schema::<ReadResourceParams>());
 
-            registry.insert(
-                "tools/call".to_string(),
-                generate_schema::<CallToolParams>(),
-            );
+            registry.insert("tools/call".to_string(), generate_schema::<CallToolParams>());
 
             registry
         })
@@ -359,36 +356,18 @@ pub mod schema {
             let mut registry = HashMap::new();
 
             // Initialize method
-            registry.insert(
-                "initialize".to_string(),
-                generate_schema::<InitializeResult>(),
-            );
+            registry.insert("initialize".to_string(), generate_schema::<InitializeResult>());
 
             // Resource methods
-            registry.insert(
-                "resources/list".to_string(),
-                generate_schema::<ListResourcesResult>(),
-            );
-            registry.insert(
-                "resources/read".to_string(),
-                generate_schema::<ReadResourceResult>(),
-            );
+            registry.insert("resources/list".to_string(), generate_schema::<ListResourcesResult>());
+            registry.insert("resources/read".to_string(), generate_schema::<ReadResourceResult>());
 
             // Tool methods
-            registry.insert(
-                "tools/list".to_string(),
-                generate_schema::<ListToolsResult>(),
-            );
-            registry.insert(
-                "tools/call".to_string(),
-                generate_schema::<CallToolResult>(),
-            );
+            registry.insert("tools/list".to_string(), generate_schema::<ListToolsResult>());
+            registry.insert("tools/call".to_string(), generate_schema::<CallToolResult>());
 
             // Prompt methods
-            registry.insert(
-                "prompts/list".to_string(),
-                generate_schema::<ListPromptsResult>(),
-            );
+            registry.insert("prompts/list".to_string(), generate_schema::<ListPromptsResult>());
 
             registry
         })
@@ -407,17 +386,17 @@ pub mod schema {
 
     /// Validate the given value against a specific JSON schema
     pub fn validate_against_schema(value: &Value, schema: &Value) -> Result<(), Error> {
-        let compiled = JSONSchema::compile(schema)
-            .map_err(|e| Error::Protocol(format!("Invalid schema: {}", e)))?;
+        let compiled = JSONSchema::compile(schema).map_err(|e|
+            Error::Protocol(format!("Invalid schema: {}", e))
+        )?;
 
         let validation = compiled.validate(value);
         if let Err(errors) = validation {
             let error_msgs: Vec<String> = errors.map(|e| format!("{}", e)).collect();
 
-            return Err(Error::InvalidParams(format!(
-                "Schema validation failed: {}",
-                error_msgs.join(", ")
-            )));
+            return Err(
+                Error::InvalidParams(format!("Schema validation failed: {}", error_msgs.join(", ")))
+            );
         }
 
         Ok(())
@@ -509,9 +488,7 @@ pub mod auth {
         if let Some(key) = header.strip_prefix("Bearer ") {
             Ok(ApiKey::new(key))
         } else {
-            Err(Error::Protocol(
-                "Invalid authentication header format".to_string(),
-            ))
+            Err(Error::Protocol("Invalid authentication header format".to_string()))
         }
     }
 }
