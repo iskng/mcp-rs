@@ -1,8 +1,9 @@
 //! Type definitions for the Model Context Protocol (MCP).
 //! These types are generated to match the schema defined in schema.json.
 
+use crate::protocol::method::Method;
 use schemars::JsonSchema;
-use serde::{ Deserialize, Serialize };
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 pub const PROTOCOL_VERSION: &str = "2024-11-05";
@@ -376,7 +377,7 @@ pub struct JSONRPCRequest {
     pub id: RequestId,
 
     /// The method name.
-    pub method: String,
+    pub method: Method,
 
     /// The request parameters.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -390,7 +391,7 @@ pub struct JSONRPCNotification {
     pub jsonrpc: String,
 
     /// The method name.
-    pub method: String,
+    pub method: Method,
 
     /// The notification parameters.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -465,7 +466,7 @@ pub struct Result {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct Request {
     /// The method name.
-    pub method: String,
+    pub method: Method,
 
     /// The request parameters.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -493,7 +494,7 @@ pub struct RequestMeta {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct Notification {
     /// The method name.
-    pub method: String,
+    pub method: Method,
 
     /// The notification parameters.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -796,7 +797,7 @@ pub struct ToolInputSchema {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct PaginatedRequest {
     /// The method name.
-    pub method: String,
+    pub method: Method,
 
     /// The request parameters.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -828,7 +829,7 @@ pub struct PaginatedResult {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct InitializeRequest {
     /// The method name (always "initialize").
-    pub method: String,
+    pub method: Method,
 
     /// The initialize parameters.
     pub params: InitializeParams,
@@ -876,7 +877,7 @@ pub struct InitializeResult {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct InitializedNotification {
     /// The method name (always "notifications/initialized").
-    pub method: String,
+    pub method: Method,
 
     /// The notification parameters.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -887,7 +888,7 @@ pub struct InitializedNotification {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct PingRequest {
     /// The method name (always "ping").
-    pub method: String,
+    pub method: Method,
 
     /// The ping parameters.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -898,7 +899,7 @@ pub struct PingRequest {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ListRootsRequest {
     /// The method name (always "roots/list").
-    pub method: String,
+    pub method: Method,
 
     /// The request parameters.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -920,7 +921,7 @@ pub struct ListRootsResult {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct RootsListChangedNotification {
     /// The method name (always "notifications/roots/list_changed").
-    pub method: String,
+    pub method: Method,
 
     /// The notification parameters.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -931,7 +932,7 @@ pub struct RootsListChangedNotification {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ListResourcesRequest {
     /// The method name (always "resources/list").
-    pub method: String,
+    pub method: Method,
 
     /// The request parameters.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -958,7 +959,7 @@ pub struct ListResourcesResult {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ListResourceTemplatesRequest {
     /// The method name (always "resources/templates/list").
-    pub method: String,
+    pub method: Method,
 
     /// The request parameters.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -986,7 +987,7 @@ pub struct ListResourceTemplatesResult {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ReadResourceRequest {
     /// The method name (always "resources/read").
-    pub method: String,
+    pub method: Method,
 
     /// The request parameters.
     pub params: ReadResourceParams,
@@ -1014,7 +1015,7 @@ pub struct ReadResourceResult {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ResourceListChangedNotification {
     /// The method name (always "notifications/resources/list_changed").
-    pub method: String,
+    pub method: Method,
 
     /// The notification parameters.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1025,7 +1026,7 @@ pub struct ResourceListChangedNotification {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct SubscribeRequest {
     /// The method name (always "resources/subscribe").
-    pub method: String,
+    pub method: Method,
 
     /// The request parameters.
     pub params: SubscribeParams,
@@ -1042,7 +1043,7 @@ pub struct SubscribeParams {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct UnsubscribeRequest {
     /// The method name (always "resources/unsubscribe").
-    pub method: String,
+    pub method: Method,
 
     /// The request parameters.
     pub params: UnsubscribeParams,
@@ -1059,7 +1060,7 @@ pub struct UnsubscribeParams {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ResourceUpdatedNotification {
     /// The method name (always "notifications/resources/updated").
-    pub method: String,
+    pub method: Method,
 
     /// The notification parameters.
     pub params: ResourceUpdatedParams,
@@ -1076,7 +1077,7 @@ pub struct ResourceUpdatedParams {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ListPromptsRequest {
     /// The method name (always "prompts/list").
-    pub method: String,
+    pub method: Method,
 
     /// The request parameters.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1103,7 +1104,7 @@ pub struct ListPromptsResult {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct GetPromptRequest {
     /// The method name (always "prompts/get").
-    pub method: String,
+    pub method: Method,
 
     /// The request parameters.
     pub params: GetPromptParams,
@@ -1139,7 +1140,7 @@ pub struct GetPromptResult {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct PromptListChangedNotification {
     /// The method name (always "notifications/prompts/list_changed").
-    pub method: String,
+    pub method: Method,
 
     /// The notification parameters.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1150,7 +1151,7 @@ pub struct PromptListChangedNotification {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ListToolsRequest {
     /// The method name (always "tools/list").
-    pub method: String,
+    pub method: Method,
 
     /// The request parameters.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1177,7 +1178,7 @@ pub struct ListToolsResult {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct CallToolRequest {
     /// The method name (always "tools/call").
-    pub method: String,
+    pub method: Method,
 
     /// The request parameters.
     pub params: CallToolParams,
@@ -1214,7 +1215,7 @@ pub struct CallToolResult {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ToolListChangedNotification {
     /// The method name (always "notifications/tools/list_changed").
-    pub method: String,
+    pub method: Method,
 
     /// The notification parameters.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1225,7 +1226,7 @@ pub struct ToolListChangedNotification {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct CreateMessageRequest {
     /// The method name (always "sampling/createMessage").
-    pub method: String,
+    pub method: Method,
 
     /// The request parameters.
     pub params: CreateMessageParams,
@@ -1296,7 +1297,7 @@ pub struct CreateMessageResult {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct CompleteRequest {
     /// The method name (always "completion/complete").
-    pub method: String,
+    pub method: Method,
 
     /// The request parameters.
     pub params: CompleteParams,
@@ -1362,7 +1363,7 @@ pub struct CompletionInfo {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct SetLevelRequest {
     /// The method name (always "logging/setLevel").
-    pub method: String,
+    pub method: Method,
 
     /// The request parameters.
     pub params: SetLevelParams,
@@ -1379,7 +1380,7 @@ pub struct SetLevelParams {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct LoggingMessageNotification {
     /// The method name (always "notifications/logging/message").
-    pub method: String,
+    pub method: Method,
 
     /// The notification parameters.
     pub params: LoggingMessageParams,
@@ -1403,7 +1404,7 @@ pub struct LoggingMessageParams {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ProgressNotification {
     /// The method name (always "notifications/progress").
-    pub method: String,
+    pub method: Method,
 
     /// The notification parameters.
     pub params: ProgressParams,
@@ -1428,7 +1429,7 @@ pub struct ProgressParams {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct CancelledNotification {
     /// The method name (always "notifications/cancelled").
-    pub method: String,
+    pub method: Method,
 
     /// The notification parameters.
     pub params: CancelledParams,

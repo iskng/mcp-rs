@@ -1,7 +1,7 @@
 extern crate proc_macro;
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{ parse_macro_input, DeriveInput, Data, DataStruct, Fields, Lit, Field, Type };
+use syn::{Data, DataStruct, DeriveInput, Field, Fields, Lit, Type, parse_macro_input};
 
 /// Derive macro for implementing a tool from a struct
 ///
@@ -43,13 +43,17 @@ pub fn derive_tool(input: TokenStream) -> TokenStream {
                     }
                 }
                 Ok(())
-            }).unwrap_or_else(|_| {});
+            })
+            .unwrap_or_else(|_| {});
         }
     }
 
     // Get the struct fields
     let fields = match &input.data {
-        Data::Struct(DataStruct { fields: Fields::Named(fields), .. }) => &fields.named,
+        Data::Struct(DataStruct {
+            fields: Fields::Named(fields),
+            ..
+        }) => &fields.named,
         _ => panic!("Tool derive only works on structs with named fields"),
     };
 
@@ -97,7 +101,8 @@ pub fn derive_tool(input: TokenStream) -> TokenStream {
                         }
                     }
                     Ok(())
-                }).unwrap_or_else(|_| {});
+                })
+                .unwrap_or_else(|_| {});
             }
         }
 
@@ -170,15 +175,14 @@ pub fn derive_tool(input: TokenStream) -> TokenStream {
     let mut enum_field_deserializers = quote! {};
 
     // Generate code for the ToToolSchema trait implementation
-    let expanded =
-        quote! {
+    let expanded = quote! {
         impl ::mcp_rs::protocol::tools::ToToolSchema for #name {
             fn to_tool_schema(&self) -> ::mcp_rs::protocol::Tool {
                 let mut builder = ::mcp_rs::protocol::tools::ToolBuilder::new(#name_str, #tool_description);
-                
+
                 // Add all parameters
                 #(#params)*
-                
+
                 builder.build()
             }
         }
@@ -192,7 +196,7 @@ pub fn derive_tool(input: TokenStream) -> TokenStream {
 
 /// Helper function to determine parameter type information from a struct field
 fn get_parameter_info_for_field(
-    field: &Field
+    field: &Field,
 ) -> (proc_macro2::TokenStream, bool, Option<syn::TypePath>) {
     match &field.ty {
         Type::Path(type_path) => {
@@ -201,29 +205,52 @@ fn get_parameter_info_for_field(
                 let type_name = segment.ident.to_string();
 
                 if type_name == "String" || type_name == "str" {
-                    (quote! { ::mcp_rs::protocol::tools::String }, false, Some(type_path.clone()))
-                } else if
-                    type_name == "i8" ||
-                    type_name == "i16" ||
-                    type_name == "i32" ||
-                    type_name == "i64" ||
-                    type_name == "u8" ||
-                    type_name == "u16" ||
-                    type_name == "u32" ||
-                    type_name == "u64" ||
-                    type_name == "f32" ||
-                    type_name == "f64"
+                    (
+                        quote! { ::mcp_rs::protocol::tools::String },
+                        false,
+                        Some(type_path.clone()),
+                    )
+                } else if type_name == "i8"
+                    || type_name == "i16"
+                    || type_name == "i32"
+                    || type_name == "i64"
+                    || type_name == "u8"
+                    || type_name == "u16"
+                    || type_name == "u32"
+                    || type_name == "u64"
+                    || type_name == "f32"
+                    || type_name == "f64"
                 {
-                    (quote! { ::mcp_rs::protocol::tools::Number }, false, Some(type_path.clone()))
+                    (
+                        quote! { ::mcp_rs::protocol::tools::Number },
+                        false,
+                        Some(type_path.clone()),
+                    )
                 } else if type_name == "bool" {
-                    (quote! { ::mcp_rs::protocol::tools::Boolean }, false, Some(type_path.clone()))
+                    (
+                        quote! { ::mcp_rs::protocol::tools::Boolean },
+                        false,
+                        Some(type_path.clone()),
+                    )
                 } else if type_name == "Vec" {
-                    (quote! { ::mcp_rs::protocol::tools::Array }, false, Some(type_path.clone()))
+                    (
+                        quote! { ::mcp_rs::protocol::tools::Array },
+                        false,
+                        Some(type_path.clone()),
+                    )
                 } else if type_name == "HashMap" || type_name == "BTreeMap" {
-                    (quote! { ::mcp_rs::protocol::tools::Object }, false, Some(type_path.clone()))
+                    (
+                        quote! { ::mcp_rs::protocol::tools::Object },
+                        false,
+                        Some(type_path.clone()),
+                    )
                 } else {
                     // Assume it's an enum (or other object type)
-                    (quote! { ::mcp_rs::protocol::tools::String }, true, Some(type_path.clone()))
+                    (
+                        quote! { ::mcp_rs::protocol::tools::String },
+                        true,
+                        Some(type_path.clone()),
+                    )
                 }
             } else {
                 // Default to Object if we can't determine

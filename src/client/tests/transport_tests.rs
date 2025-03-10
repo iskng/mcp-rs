@@ -3,20 +3,9 @@
 //! These tests ensure our transport implementations are compatible
 //! with the Python SDK by mirroring similar test patterns.
 
-use std::sync::Arc;
-use std::time::Duration;
-use tokio::sync::Mutex;
-use tokio::time::timeout;
-
 use crate::protocol::{
-    JSONRPCMessage,
-    JSONRPCRequest,
-    JSONRPCResponse,
-    JSONRPCNotification,
-    RequestId,
-    Error,
+    JSONRPCMessage, JSONRPCNotification, JSONRPCRequest, JSONRPCResponse, Method, RequestId,
 };
-use crate::transport::{ DirectIOTransport, Transport };
 
 // Tests for transport behavior
 // We won't test specific transport implementations (SSE, WebSocket, etc.)
@@ -57,7 +46,7 @@ fn test_transport_message_format() {
     let request = JSONRPCRequest {
         jsonrpc: "2.0".to_string(),
         id: RequestId::Number(1),
-        method: "test".to_string(),
+        method: Method::Initialize,
         params: Some(serde_json::json!({ "test": "value" })),
     };
 
@@ -76,7 +65,7 @@ fn test_transport_message_format() {
     // We should be able to round-trip serialize/deserialize
     match parsed {
         JSONRPCMessage::Request(req) => {
-            assert_eq!(req.method, "test");
+            assert_eq!(req.method, Method::Initialize);
             match req.id {
                 RequestId::Number(num) => assert_eq!(num, 1),
                 _ => panic!("Expected number request ID"),
@@ -99,7 +88,7 @@ fn test_notification_message_format() {
     // Create a JSON-RPC notification
     let notification = JSONRPCNotification {
         jsonrpc: "2.0".to_string(),
-        method: "test/notification".to_string(),
+        method: Method::NotificationsResourcesUpdated,
         params: Some(serde_json::json!({ "event": "test" })),
     };
 
@@ -118,7 +107,7 @@ fn test_notification_message_format() {
     // We should be able to round-trip serialize/deserialize
     match parsed {
         JSONRPCMessage::Notification(notif) => {
-            assert_eq!(notif.method, "test/notification");
+            assert_eq!(notif.method, Method::NotificationsResourcesUpdated);
 
             // Check params
             if let Some(params) = notif.params {

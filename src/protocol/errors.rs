@@ -4,11 +4,11 @@
 //! creating standardized JSON-RPC error responses.
 
 use schemars::JsonSchema;
-use serde::{ Deserialize, Serialize };
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
 
-use crate::protocol::{ JSONRPCError, JSONRPCErrorDetails, JSONRPCMessage, RequestId };
+use crate::protocol::{JSONRPCError, JSONRPCErrorDetails, JSONRPCMessage, RequestId};
 
 /// Standard JSON-RPC 2.0 error codes and MCP-specific error codes
 pub mod error_codes {
@@ -232,7 +232,7 @@ pub fn create_error_response(
     id: RequestId,
     code: i32,
     message: &str,
-    data: Option<Value>
+    data: Option<Value>,
 ) -> JSONRPCError {
     JSONRPCError {
         jsonrpc: "2.0".to_string(),
@@ -285,7 +285,7 @@ pub fn tool_execution_error(id: RequestId, tool_name: &str, message: &str) -> JS
     standard_error_response(
         id,
         error_codes::TOOL_EXECUTION_ERROR,
-        &format!("Error executing tool '{}': {}", tool_name, message)
+        &format!("Error executing tool '{}': {}", tool_name, message),
     )
 }
 
@@ -294,7 +294,7 @@ pub fn resource_not_found_error(id: RequestId, uri: &str) -> JSONRPCError {
     standard_error_response(
         id,
         error_codes::RESOURCE_NOT_FOUND,
-        &format!("Resource not found: {}", uri)
+        &format!("Resource not found: {}", uri),
     )
 }
 
@@ -306,8 +306,9 @@ pub fn error_to_rpc_error(id: RequestId, error: &Error) -> JSONRPCError {
         Error::Json(err) => parse_error(id.clone(), &format!("JSON Error: {}", err)),
         Error::Protocol(msg) => internal_error(id.clone(), msg),
         Error::Transport(msg) => internal_error(id.clone(), msg),
-        Error::Lifecycle(msg) =>
-            standard_error_response(id.clone(), error_codes::CLIENT_NOT_INITIALIZED, msg),
+        Error::Lifecycle(msg) => {
+            standard_error_response(id.clone(), error_codes::CLIENT_NOT_INITIALIZED, msg)
+        }
         Error::Resource(msg) => resource_not_found_error(id.clone(), msg),
         Error::Validation(msg) => validation_error(id.clone(), msg),
         Error::Io(msg) => internal_error(id.clone(), &format!("IO Error: {}", msg)),
@@ -346,17 +347,25 @@ pub fn rpc_error_to_error(error: &JSONRPCError) -> Error {
         error_codes::AUTHORIZATION_ERROR => Error::Authorization(error.error.message.clone()),
         error_codes::RATE_LIMIT_EXCEEDED => Error::RateLimit(error.error.message.clone()),
         error_codes::REQUEST_TIMEOUT => Error::Timeout(error.error.message.clone()),
-        error_codes::SERVER_NOT_INITIALIZED | error_codes::CLIENT_NOT_INITIALIZED =>
-            Error::Initialization(error.error.message.clone()),
+        error_codes::SERVER_NOT_INITIALIZED | error_codes::CLIENT_NOT_INITIALIZED => {
+            Error::Initialization(error.error.message.clone())
+        }
         error_codes::SERVER_UNAVAILABLE => Error::ServerUnavailable(error.error.message.clone()),
-        error_codes::SCHEMA_VALIDATION_ERROR =>
-            Error::SchemaValidation(error.error.message.clone()),
-        error_codes::INCOMPATIBLE_VERSION =>
-            Error::VersionIncompatibility(error.error.message.clone()),
-        error_codes::PARSE_ERROR | error_codes::INVALID_REQUEST | error_codes::INTERNAL_ERROR =>
-            Error::Protocol(error.error.message.clone()),
-        _ if code >= error_codes::SERVER_ERROR_START && code <= error_codes::SERVER_ERROR_END =>
-            Error::Protocol(error.error.message.clone()),
-        _ => Error::Other(format!("Unknown error code {}: {}", code, error.error.message)),
+        error_codes::SCHEMA_VALIDATION_ERROR => {
+            Error::SchemaValidation(error.error.message.clone())
+        }
+        error_codes::INCOMPATIBLE_VERSION => {
+            Error::VersionIncompatibility(error.error.message.clone())
+        }
+        error_codes::PARSE_ERROR | error_codes::INVALID_REQUEST | error_codes::INTERNAL_ERROR => {
+            Error::Protocol(error.error.message.clone())
+        }
+        _ if code >= error_codes::SERVER_ERROR_START && code <= error_codes::SERVER_ERROR_END => {
+            Error::Protocol(error.error.message.clone())
+        }
+        _ => Error::Other(format!(
+            "Unknown error code {}: {}",
+            code, error.error.message
+        )),
     }
 }

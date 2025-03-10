@@ -1,23 +1,13 @@
 use crate::protocol::Error;
 use crate::protocol::{
-    CallToolParams,
-    Cursor,
-    GetPromptParams,
-    InitializeParams,
-    JSONRPCMessage,
-    JSONRPCRequest,
-    JSONRPCResponse,
-    ListToolsResult,
-    PaginatedRequestParams,
-    ReadResourceParams,
-    RequestId,
-    Result as ProtocolResult,
-    Tool,
+    CallToolParams, Cursor, GetPromptParams, InitializeParams, JSONRPCMessage, JSONRPCRequest,
+    JSONRPCResponse, ListToolsResult, PaginatedRequestParams, ReadResourceParams, RequestId,
+    Result as ProtocolResult, Tool,
 };
 use serde_json::Value;
 use std::collections::HashMap;
 
-use super::response_from_typed;
+use super::{Method, response_from_typed};
 
 /// Create a success response with the given result
 pub fn create_success_response(id: RequestId, result: ProtocolResult) -> JSONRPCResponse {
@@ -52,7 +42,7 @@ pub fn request_id_to_i32(id: &RequestId) -> i32 {
 /// Create tools result with pagination
 pub fn create_tools_result(
     tools: Vec<crate::protocol::Tool>,
-    next_cursor: Option<String>
+    next_cursor: Option<String>,
 ) -> ListToolsResult {
     ListToolsResult {
         tools,
@@ -62,7 +52,7 @@ pub fn create_tools_result(
 }
 
 /// Helper function to extract the method from a JSONRPCRequest
-pub fn extract_method(request: &JSONRPCRequest) -> &str {
+pub fn extract_method(request: &JSONRPCRequest) -> &Method {
     &request.method
 }
 
@@ -76,15 +66,15 @@ pub fn map_request_to_type(request: &JSONRPCRequest) -> String {
 pub fn create_list_tools_message(
     id: RequestId,
     tools: Vec<Tool>,
-    next_cursor: Option<String>
+    next_cursor: Option<String>,
 ) -> JSONRPCMessage {
     let result = create_tools_result(tools, next_cursor);
     response_from_typed(id, result)
 }
 
 /// Helper to check if a method matches
-pub fn method_matches(request: &JSONRPCRequest, method_name: &str) -> bool {
-    request.method == method_name
+pub fn method_matches(request: &JSONRPCRequest, method: Method) -> bool {
+    request.method == method
 }
 
 /// Helper to convert JSON value to HashMap, or create a new HashMap if not an object
@@ -103,7 +93,8 @@ pub fn value_to_hashmap(value: &Value) -> HashMap<String, Value> {
 
 /// Helper to get a value from the HashMap or a default
 pub fn get_value_or_default<T>(map: &HashMap<String, Value>, key: &str, default: T) -> T
-    where T: serde::de::DeserializeOwned
+where
+    T: serde::de::DeserializeOwned,
 {
     map.get(key)
         .and_then(|v| serde_json::from_value(v.clone()).ok())
@@ -129,7 +120,11 @@ pub fn parse_list_tools_request(request: &JSONRPCRequest) -> Result<PaginatedReq
     if let Some(params_value) = &request.params {
         if let Ok(params) = serde_json::from_value::<HashMap<String, Value>>(params_value.clone()) {
             let cursor = params.get("cursor").and_then(|v| {
-                if v.is_string() { v.as_str().map(|s| s.to_string()) } else { None }
+                if v.is_string() {
+                    v.as_str().map(|s| s.to_string())
+                } else {
+                    None
+                }
             });
 
             // Create a ListToolsParams with the cursor
@@ -150,12 +145,16 @@ pub fn parse_call_tool_request(request: &JSONRPCRequest) -> Result<CallToolParam
         if let Ok(params) = serde_json::from_value::<CallToolParams>(params_value.clone()) {
             return Ok(params);
         } else {
-            return Err(Error::InvalidParams("Invalid tool call parameters".to_string()));
+            return Err(Error::InvalidParams(
+                "Invalid tool call parameters".to_string(),
+            ));
         }
     }
 
     // No params provided
-    Err(Error::InvalidParams("No parameters provided for tool call".to_string()))
+    Err(Error::InvalidParams(
+        "No parameters provided for tool call".to_string(),
+    ))
 }
 
 /// Function to parse a ReadResourceRequest and extract params
@@ -165,17 +164,21 @@ pub fn parse_read_resource_request(request: &JSONRPCRequest) -> Result<ReadResou
         if let Ok(params) = serde_json::from_value::<ReadResourceParams>(params_value.clone()) {
             return Ok(params);
         } else {
-            return Err(Error::InvalidParams("Invalid resource read parameters".to_string()));
+            return Err(Error::InvalidParams(
+                "Invalid resource read parameters".to_string(),
+            ));
         }
     }
 
     // No params provided
-    Err(Error::InvalidParams("No parameters provided for resource read".to_string()))
+    Err(Error::InvalidParams(
+        "No parameters provided for resource read".to_string(),
+    ))
 }
 
 /// Function to parse a ListPromptsRequest and extract params
 pub fn parse_list_prompts_request(
-    request: &JSONRPCRequest
+    request: &JSONRPCRequest,
 ) -> Result<PaginatedRequestParams, Error> {
     // Same as ListToolsRequest
     parse_list_tools_request(request)
@@ -188,17 +191,21 @@ pub fn parse_get_prompt_request(request: &JSONRPCRequest) -> Result<GetPromptPar
         if let Ok(params) = serde_json::from_value::<GetPromptParams>(params_value.clone()) {
             return Ok(params);
         } else {
-            return Err(Error::InvalidParams("Invalid prompt parameters".to_string()));
+            return Err(Error::InvalidParams(
+                "Invalid prompt parameters".to_string(),
+            ));
         }
     }
 
     // No params provided
-    Err(Error::InvalidParams("No parameters provided for get prompt".to_string()))
+    Err(Error::InvalidParams(
+        "No parameters provided for get prompt".to_string(),
+    ))
 }
 
 /// Function to parse a ListResourcesRequest and extract params
 pub fn parse_list_resources_request(
-    request: &JSONRPCRequest
+    request: &JSONRPCRequest,
 ) -> Result<PaginatedRequestParams, Error> {
     // Same as ListToolsRequest
     parse_list_tools_request(request)
@@ -211,10 +218,14 @@ pub fn parse_initialize_request(request: &JSONRPCRequest) -> Result<InitializePa
         if let Ok(params) = serde_json::from_value::<InitializeParams>(params_value.clone()) {
             return Ok(params);
         } else {
-            return Err(Error::InvalidParams("Invalid initialize parameters".to_string()));
+            return Err(Error::InvalidParams(
+                "Invalid initialize parameters".to_string(),
+            ));
         }
     }
 
     // No params provided
-    Err(Error::InvalidParams("No parameters provided for initialize".to_string()))
+    Err(Error::InvalidParams(
+        "No parameters provided for initialize".to_string(),
+    ))
 }

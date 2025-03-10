@@ -7,7 +7,7 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
-use super::{JSONRPCMessage, JSONRPCNotification};
+use super::{JSONRPCMessage, JSONRPCNotification, Method};
 
 /// Configuration for validation
 #[derive(Debug, Clone)]
@@ -49,9 +49,9 @@ pub fn validate_request(
     }
 
     // Method cannot be empty
-    if request.method.is_empty() {
-        return Err(Error::Validation("Method cannot be empty".to_string()));
-    }
+    // if request.method.is_empty() {
+    //     return Err(Error::Validation("Method cannot be empty".to_string()));
+    // }
 
     // Schema validation if enabled
     if config.use_schema_validation {
@@ -77,7 +77,7 @@ pub fn validate_request(
 /// * `config` - The validation configuration
 pub fn validate_response(
     response: &JSONRPCResponse,
-    method: &str,
+    method: &Method,
     config: &ValidationConfig,
 ) -> Result<(), Error> {
     // Basic validations
@@ -115,11 +115,6 @@ pub fn validate_notification(
         return Err(Error::Validation(
             "JSON-RPC version must be 2.0".to_string(),
         ));
-    }
-
-    // Method cannot be empty
-    if notification.method.is_empty() {
-        return Err(Error::Validation("Method cannot be empty".to_string()));
     }
 
     // Schema validation if enabled
@@ -227,10 +222,10 @@ pub fn validate_message_against_full_schema(message: &JSONRPCMessage) -> Result<
 }
 
 /// Get or create the method parameter schema registry
-fn param_schema_registry() -> &'static HashMap<String, Value> {
-    static REGISTRY: OnceLock<HashMap<String, Value>> = OnceLock::new();
+fn param_schema_registry() -> &'static HashMap<Method, Value> {
+    static REGISTRY: OnceLock<HashMap<Method, Value>> = OnceLock::new();
     REGISTRY.get_or_init(|| {
-        let mut registry = HashMap::new();
+        let registry = HashMap::new();
 
         // Add schema entries for request parameters
         // These would be generated from your protocol types
@@ -243,10 +238,10 @@ fn param_schema_registry() -> &'static HashMap<String, Value> {
 }
 
 /// Get or create the method result schema registry
-fn result_schema_registry() -> &'static HashMap<String, Value> {
-    static REGISTRY: OnceLock<HashMap<String, Value>> = OnceLock::new();
+fn result_schema_registry() -> &'static HashMap<Method, Value> {
+    static REGISTRY: OnceLock<HashMap<Method, Value>> = OnceLock::new();
     REGISTRY.get_or_init(|| {
-        let mut registry = HashMap::new();
+        let registry = HashMap::new();
 
         // Add schema entries for response results
         // Example:
@@ -287,17 +282,17 @@ pub fn validate_against_schema(value: &Value, schema: &Value) -> Result<(), Erro
 }
 
 /// Get the parameter schema for a specific method
-pub fn get_param_schema(method: &str) -> Option<Value> {
+pub fn get_param_schema(method: &Method) -> Option<Value> {
     param_schema_registry().get(method).cloned()
 }
 
 /// Get the result schema for a specific method
-pub fn get_result_schema(method: &str) -> Option<Value> {
+pub fn get_result_schema(method: &Method) -> Option<Value> {
     result_schema_registry().get(method).cloned()
 }
 
 /// Validate parameters for a specific method
-pub fn validate_method_params(method: &str, params: &Value) -> Result<(), Error> {
+pub fn validate_method_params(method: &Method, params: &Value) -> Result<(), Error> {
     if let Some(schema) = get_param_schema(method) {
         validate_against_schema(params, &schema)
     } else {
@@ -307,7 +302,7 @@ pub fn validate_method_params(method: &str, params: &Value) -> Result<(), Error>
 }
 
 /// Validate result for a specific method
-pub fn validate_method_result(method: &str, result: &Value) -> Result<(), Error> {
+pub fn validate_method_result(method: &Method, result: &Value) -> Result<(), Error> {
     if let Some(schema) = get_result_schema(method) {
         validate_against_schema(result, &schema)
     } else {

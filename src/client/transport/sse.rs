@@ -6,20 +6,20 @@
 
 use async_trait::async_trait;
 use futures_util::stream::StreamExt;
-use reqwest::{ Client as HttpClient, ClientBuilder, header };
+use log::{error, info};
+use reqwest::{Client as HttpClient, ClientBuilder, header};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;
-use tokio::sync::{ Mutex, mpsc, oneshot };
-use log::{ info, error };
+use tokio::sync::{Mutex, mpsc, oneshot};
 
 // Use both protocol types
+use crate::client::transport::DirectIOTransport;
+use crate::client::transport::Transport;
 use crate::protocol::Error;
-use crate::protocol::{ JSONRPCMessage, RequestId };
 use crate::protocol::messages::Message; // Import the high-level Message type
-use crate::transport::Transport;
-use crate::transport::DirectIOTransport;
+use crate::protocol::{JSONRPCMessage, RequestId};
 use crate::server::server::AppState;
 
 /// Default timeout for HTTP requests
@@ -146,16 +146,16 @@ impl SseTransport {
                 }
 
                 // Try to connect to the SSE endpoint
-                match
-                    Self::connect_to_sse(
-                        http_client_clone.clone(),
-                        events_url_clone.clone(),
-                        tx_clone.clone(),
-                        session_id_clone.clone(),
-                        connected_clone.clone(),
-                        is_ready_clone.clone(),
-                        messages_url_clone.clone()
-                    ).await
+                match Self::connect_to_sse(
+                    http_client_clone.clone(),
+                    events_url_clone.clone(),
+                    tx_clone.clone(),
+                    session_id_clone.clone(),
+                    connected_clone.clone(),
+                    is_ready_clone.clone(),
+                    messages_url_clone.clone(),
+                )
+                .await
                 {
                     Ok(_) => {
                         tracing::info!("SSE connection ended normally");
@@ -206,7 +206,7 @@ impl SseTransport {
         session_id: Arc<Mutex<String>>,
         connected: Arc<Mutex<bool>>,
         is_ready: Arc<AtomicBool>,
-        messages_url: Arc<Mutex<String>>
+        messages_url: Arc<Mutex<String>>,
     ) -> Result<(), Error> {
         let mut retries = 0;
         let max_retries = 5;
@@ -233,11 +233,8 @@ impl SseTransport {
                     if !resp.status().is_success() {
                         let status = resp.status();
                         let text = resp.text().await.unwrap_or_default();
-                        let error = format!(
-                            "SSE connection failed with status {}: {}",
-                            status,
-                            text
-                        );
+                        let error =
+                            format!("SSE connection failed with status {}: {}", status, text);
                         tracing::error!("{}", error);
 
                         // Increase retries and delay before next attempt
@@ -253,10 +250,8 @@ impl SseTransport {
                             max_retries
                         );
                         tokio::time::sleep(retry_delay).await;
-                        retry_delay = std::cmp::min(
-                            retry_delay * 2,
-                            std::time::Duration::from_secs(30)
-                        );
+                        retry_delay =
+                            std::cmp::min(retry_delay * 2, std::time::Duration::from_secs(30));
                         continue;
                     }
                     resp
@@ -278,10 +273,8 @@ impl SseTransport {
                         max_retries
                     );
                     tokio::time::sleep(retry_delay).await;
-                    retry_delay = std::cmp::min(
-                        retry_delay * 2,
-                        std::time::Duration::from_secs(30)
-                    );
+                    retry_delay =
+                        std::cmp::min(retry_delay * 2, std::time::Duration::from_secs(30));
                     continue;
                 }
             };
@@ -291,14 +284,14 @@ impl SseTransport {
             tracing::info!("Successfully connected to SSE endpoint!");
 
             // Process the response stream
-            match
-                Self::process_sse_stream(
-                    response,
-                    sender.clone(),
-                    session_id.clone(),
-                    is_ready.clone(),
-                    messages_url.clone()
-                ).await
+            match Self::process_sse_stream(
+                response,
+                sender.clone(),
+                session_id.clone(),
+                is_ready.clone(),
+                messages_url.clone(),
+            )
+            .await
             {
                 Ok(_) => {
                     tracing::info!("SSE stream processed successfully");
@@ -326,10 +319,8 @@ impl SseTransport {
                         max_retries
                     );
                     tokio::time::sleep(retry_delay).await;
-                    retry_delay = std::cmp::min(
-                        retry_delay * 2,
-                        std::time::Duration::from_secs(30)
-                    );
+                    retry_delay =
+                        std::cmp::min(retry_delay * 2, std::time::Duration::from_secs(30));
                 }
             }
         }
@@ -342,7 +333,7 @@ impl SseTransport {
         sender: mpsc::Sender<JSONRPCMessage>,
         session_id: Arc<Mutex<String>>,
         is_ready: Arc<AtomicBool>,
-        messages_url: Arc<Mutex<String>>
+        messages_url: Arc<Mutex<String>>,
     ) -> Result<(), Error> {
         let mut stream = response.bytes_stream();
         let mut buffer = String::new();
@@ -355,11 +346,9 @@ impl SseTransport {
             match chunk_result {
                 Ok(chunk) => {
                     // Convert bytes to string and append to buffer
-                    let chunk_str = std::str
-                        ::from_utf8(&chunk)
-                        .map_err(|e| {
-                            Error::Transport(format!("Invalid UTF-8 in SSE stream: {}", e))
-                        })?;
+                    let chunk_str = std::str::from_utf8(&chunk).map_err(|e| {
+                        Error::Transport(format!("Invalid UTF-8 in SSE stream: {}", e))
+                    })?;
 
                     buffer.push_str(chunk_str);
 
@@ -441,7 +430,7 @@ impl SseTransport {
 
     async fn process_message_event(
         event_data: &str,
-        sender: &mpsc::Sender<JSONRPCMessage>
+        sender: &mpsc::Sender<JSONRPCMessage>,
     ) -> Result<(), Error> {
         tracing::debug!("Processing message event: {}", event_data);
 
@@ -468,7 +457,7 @@ impl SseTransport {
         event_type: &str,
         event_data: &str,
         sender: &mpsc::Sender<Message>,
-        pending_requests: &Arc<Mutex<HashMap<u64, oneshot::Sender<Result<Message, Error>>>>>
+        pending_requests: &Arc<Mutex<HashMap<u64, oneshot::Sender<Result<Message, Error>>>>>,
     ) -> Result<(), Error> {
         if event_type != "message" {
             return Ok(());
@@ -552,33 +541,35 @@ impl Transport for SseTransport {
         let messages_url = {
             let url = self.messages_url.lock().await.clone();
             if url.is_empty() {
-                return Err(Error::Transport("No message endpoint URL available".to_string()));
+                return Err(Error::Transport(
+                    "No message endpoint URL available".to_string(),
+                ));
             }
             url
         };
 
         // Serialize the message to JSON
-        let message_json = serde_json
-            ::to_string(message)
+        let message_json = serde_json::to_string(message)
             .map_err(|e| Error::Transport(format!("Failed to serialize message: {}", e)))?;
 
         // Send the message to the server via HTTP POST
-        let response = self.http_client
+        let response = self
+            .http_client
             .post(&messages_url)
             .header("Content-Type", "application/json")
             .body(message_json)
-            .send().await
+            .send()
+            .await
             .map_err(|e| Error::Transport(format!("Failed to send message: {}", e)))?;
 
         // Check if the response is successful
         if !response.status().is_success() {
             let status = response.status();
             let text = response.text().await.unwrap_or_default();
-            return Err(
-                Error::Transport(
-                    format!("Failed to send message, received status {}: {}", status, text)
-                )
-            );
+            return Err(Error::Transport(format!(
+                "Failed to send message, received status {}: {}",
+                status, text
+            )));
         }
 
         Ok(())
@@ -620,7 +611,7 @@ impl DirectIOTransport for SseTransport {
 
         // Receive a message from the channel
         match self.rx.recv().await {
-            Some(msg) => { Ok((None, msg)) }
+            Some(msg) => Ok((None, msg)),
             None => Err(Error::Transport("Channel closed".to_string())),
         }
     }

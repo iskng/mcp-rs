@@ -2,8 +2,7 @@
 //!
 //! This module provides utility functions for working with MCP protocol errors.
 
-use crate::protocol::errors::{ Error, error_codes };
-use serde_json::Value;
+use crate::protocol::errors::{Error, error_codes};
 
 /// Check if an error is a capability error
 pub fn is_capability_error(error: &Error) -> bool {

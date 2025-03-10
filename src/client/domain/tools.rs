@@ -2,18 +2,14 @@
 //!
 //! This module provides domain-specific operations for working with tools.
 
-use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::{ Duration, Instant };
 use async_trait::async_trait;
-use serde::{ Deserialize, Serialize };
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tokio::time::sleep;
+use std::collections::HashMap;
+use std::time::Duration;
 
 use crate::client::clientsession::ClientSession;
-use crate::client::progress::ProgressStatus;
-use crate::protocol::{ CallToolParams, CallToolResult, Error };
-use crate::transport::Transport;
+use crate::protocol::{CallToolParams, CallToolResult, Error};
 
 /// Tool information
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -37,14 +33,14 @@ pub trait ToolOperations {
         &self,
         name: &str,
         args: Value,
-        timeout: Option<Duration>
+        timeout: Option<Duration>,
     ) -> Result<CallToolResult, Error>;
 
     /// Call a tool with simple string arguments
     async fn call_tool_with_string_args(
         &self,
         name: &str,
-        args: HashMap<String, String>
+        args: HashMap<String, String>,
     ) -> Result<CallToolResult, Error>;
 
     /// Call a tool by name
@@ -61,14 +57,11 @@ impl ToolOperations for ClientSession {
         let tool = tools.tools.iter().find(|t| t.name == name);
 
         match tool {
-            Some(tool) =>
-                Ok(ToolInfo {
-                    name: tool.name.clone(),
-                    description: tool.description.clone(),
-                    input_schema: Some(
-                        serde_json::to_value(&tool.input_schema).unwrap_or_default()
-                    ),
-                }),
+            Some(tool) => Ok(ToolInfo {
+                name: tool.name.clone(),
+                description: tool.description.clone(),
+                input_schema: Some(serde_json::to_value(&tool.input_schema).unwrap_or_default()),
+            }),
             None => Err(Error::Other(format!("Tool not found: {}", name))),
         }
     }
@@ -77,7 +70,7 @@ impl ToolOperations for ClientSession {
         &self,
         name: &str,
         args: Value,
-        timeout: Option<Duration>
+        timeout: Option<Duration>,
     ) -> Result<CallToolResult, Error> {
         // Convert args to proper format
         let arguments = if args.is_object() {
@@ -105,7 +98,7 @@ impl ToolOperations for ClientSession {
     async fn call_tool_with_string_args(
         &self,
         name: &str,
-        args: HashMap<String, String>
+        args: HashMap<String, String>,
     ) -> Result<CallToolResult, Error> {
         // Convert string args to JSON values
         let args_value = args
@@ -114,7 +107,8 @@ impl ToolOperations for ClientSession {
             .collect::<serde_json::Map<String, Value>>();
 
         // Call the tool
-        self.call_tool_and_wait(name, Value::Object(args_value), None).await
+        self.call_tool_and_wait(name, Value::Object(args_value), None)
+            .await
     }
 
     async fn call_tool_by_name(&self, name: &str, args: Value) -> Result<CallToolResult, Error> {

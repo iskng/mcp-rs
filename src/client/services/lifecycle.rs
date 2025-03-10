@@ -5,12 +5,11 @@
 //! manages state transitions.
 
 use std::collections::HashSet;
-use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{ debug, info, warn };
+use tracing::debug;
 
-use crate::protocol::Error;
-use crate::protocol::{ InitializeResult, JSONRPCMessage, JSONRPCNotification };
+use crate::protocol::{Error, Method};
+use crate::protocol::{InitializeResult, JSONRPCMessage, JSONRPCNotification};
 
 /// Represents the different states in the MCP protocol lifecycle
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -145,13 +144,10 @@ impl LifecycleManager {
             }
 
             // Invalid transitions
-            _ => {
-                Err(
-                    Error::Lifecycle(
-                        format!("Invalid state transition from {:?} to {:?}", *state, new_state)
-                    )
-                )
-            }
+            _ => Err(Error::Lifecycle(format!(
+                "Invalid state transition from {:?} to {:?}",
+                *state, new_state
+            ))),
         }
     }
 
@@ -223,34 +219,25 @@ impl LifecycleManager {
 
         match *state {
             LifecycleState::Ready => Ok(()),
-            LifecycleState::Error(ref msg) => {
-                Err(
-                    Error::Lifecycle(
-                        format!("Cannot perform {} - client is in error state: {}", operation, msg)
-                    )
-                )
-            }
-            LifecycleState::Closed => {
-                Err(Error::Lifecycle(format!("Cannot perform {} - client is closed", operation)))
-            }
-            _ => {
-                Err(
-                    Error::Lifecycle(
-                        format!(
-                            "Cannot perform {} - client is not ready (state: {:?})",
-                            operation,
-                            *state
-                        )
-                    )
-                )
-            }
+            LifecycleState::Error(ref msg) => Err(Error::Lifecycle(format!(
+                "Cannot perform {} - client is in error state: {}",
+                operation, msg
+            ))),
+            LifecycleState::Closed => Err(Error::Lifecycle(format!(
+                "Cannot perform {} - client is closed",
+                operation
+            ))),
+            _ => Err(Error::Lifecycle(format!(
+                "Cannot perform {} - client is not ready (state: {:?})",
+                operation, *state
+            ))),
         }
     }
 
     /// Validate if a request is allowed in the current state
-    pub async fn validate_request(&self, method: &str) -> Result<(), Error> {
+    pub async fn validate_request(&self, method: &Method) -> Result<(), Error> {
         // Special case for initialize which is allowed in Created state
-        if method == "initialize" {
+        if method == &Method::Initialize {
             let state = self.state.read().await;
             if *state == LifecycleState::Created {
                 return Ok(());
@@ -258,36 +245,30 @@ impl LifecycleManager {
         }
 
         // For other methods, client must be ready
-        self.validate_operation(&format!("request {}", method)).await
+        self.validate_operation(&format!("request {}", method))
+            .await
     }
 
     /// Validate if a notification is allowed in the current state
-    pub async fn validate_notification(&self, method: &str) -> Result<(), Error> {
+    pub async fn validate_notification(&self, method: &Method) -> Result<(), Error> {
         // Special case for initialized notification which is allowed in ServerInitialized state
-        if method == "notifications/initialized" {
+        if method == &Method::NotificationsInitialized {
             let state = self.state.read().await;
             if *state == LifecycleState::ServerInitialized {
                 return Ok(());
             }
         }
 
-        // Special case for shutdown notification which is allowed in Ready state
-        if method == "notifications/shutdown" {
-            let state = self.state.read().await;
-            if *state == LifecycleState::Ready {
-                return Ok(());
-            }
-        }
-
         // For other notifications, client must be ready
-        self.validate_operation(&format!("notification {}", method)).await
+        self.validate_operation(&format!("notification {}", method))
+            .await
     }
 
     /// Create an initialized notification message
     pub fn create_initialized_notification() -> JSONRPCMessage {
         JSONRPCMessage::Notification(JSONRPCNotification {
             jsonrpc: "2.0".to_string(),
-            method: "notifications/initialized".to_string(),
+            method: Method::NotificationsInitialized,
             params: None,
         })
     }

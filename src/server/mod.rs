@@ -10,7 +10,7 @@ use crate::protocol::JSONRPCMessage as Message;
 pub mod handlers;
 pub mod server;
 pub mod services;
-
+pub mod transport;
 /// MessageHandler trait defines the interface for handling messages
 #[async_trait]
 pub trait MessageHandler: Send + Sync {

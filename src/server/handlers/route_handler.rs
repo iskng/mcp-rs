@@ -4,14 +4,13 @@
 //! and dispatches them to the appropriate domain handlers.
 
 use async_trait::async_trait;
-use tracing::info;
 use std::sync::Arc;
-use std::any::Any;
+use tracing::info;
 
 use crate::protocol::Error;
-use crate::protocol::{ JSONRPCMessage, Message, RequestId };
-use crate::transport::middleware::ClientSession;
+use crate::protocol::{JSONRPCMessage, Message, RequestId};
 use crate::server::services::ServiceProvider;
+use crate::server::transport::middleware::ClientSession;
 
 /// Main handler trait for processing client messages
 #[async_trait]
@@ -23,7 +22,7 @@ pub trait RouteHandler: Send + Sync {
     async fn handle_message(
         &self,
         message: JSONRPCMessage,
-        session: &ClientSession
+        session: &ClientSession,
     ) -> Result<Option<JSONRPCMessage>, Error> {
         // Extract client ID from session
         let client_id = session.client_id.as_deref();
@@ -47,7 +46,10 @@ pub trait RouteHandler: Send + Sync {
             Ok(typed_message) => {
                 tracing::debug!("Converted to typed message: {:?}", typed_message);
                 // Process the typed message
-                match self.handle_typed_message(request_id, client_id, &typed_message).await {
+                match self
+                    .handle_typed_message(request_id, client_id, &typed_message)
+                    .await
+                {
                     Ok(response) => {
                         tracing::debug!("Got response from handler: {:?}", response);
                         Ok(response)
@@ -82,7 +84,7 @@ pub trait RouteHandler: Send + Sync {
         &self,
         request_id: RequestId,
         client_id: Option<&str>,
-        message: &Message
+        message: &Message,
     ) -> Result<Option<JSONRPCMessage>, Error>;
 
     /// Get a reference to the service provider, if supported by this handler

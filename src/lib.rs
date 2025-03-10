@@ -12,11 +12,7 @@ pub mod protocol;
 pub mod server;
 // pub mod server_session;
 
-pub mod transport;
-
 pub mod utils;
 // Re-export commonly used items
-pub use transport::Transport;
-pub use transport::DirectIOTransport;
-pub use transport::sse_server::SseServerTransport;
-pub use transport::stdio::StdioTransport;
+pub use server::transport::sse::SseServerTransport;
+pub use server::transport::stdio::StdioTransport;

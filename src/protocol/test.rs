@@ -2,7 +2,7 @@
 mod tests {
     use crate::protocol::protocol::Definitions;
     use schemars::schema_for;
-    use serde_json::{ self, Value, json };
+    use serde_json::{self, Value, json};
     use std::collections::HashSet;
     use std::fs;
     use std::path::Path;
@@ -16,9 +16,8 @@ mod tests {
         // Read the original schema.json file
         let schema_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/protocol/protocol.json");
         let schema_json = fs::read_to_string(schema_path).expect("Failed to read schema.json");
-        let original_schema: Value = serde_json
-            ::from_str(&schema_json)
-            .expect("Failed to parse schema.json");
+        let original_schema: Value =
+            serde_json::from_str(&schema_json).expect("Failed to parse schema.json");
 
         // Extract definitions
         let original_defs = match &original_schema["definitions"] {
@@ -74,14 +73,16 @@ mod tests {
         }
 
         if !missing_defs.is_empty() {
-            panic!("Missing definitions in generated schema: {:?}", missing_defs);
+            panic!(
+                "Missing definitions in generated schema: {:?}",
+                missing_defs
+            );
         }
 
         println!("All definitions from the original schema are present and correct!");
 
         // Simple serialization test to verify implementation
-        let json_data =
-            json!({
+        let json_data = json!({
             "jsonrpc": "2.0",
             "id": "1",
             "method": "initialize",
@@ -98,9 +99,8 @@ mod tests {
         });
 
         // Verify we can deserialize the data
-        let _: crate::protocol::protocol::JSONRPCRequest = serde_json
-            ::from_value(json_data)
-            .unwrap();
+        let _: crate::protocol::protocol::JSONRPCRequest =
+            serde_json::from_value(json_data).unwrap();
 
         println!("Schema compatibility test passed!");
     }
@@ -108,20 +108,18 @@ mod tests {
     fn compare_required_fields(def_name: &str, original: &Value, generated: &Value) {
         // Get required fields from both schemas
         let original_required = match original.get("required") {
-            Some(Value::Array(req)) =>
-                req
-                    .iter()
-                    .filter_map(|v| v.as_str())
-                    .collect::<HashSet<_>>(),
+            Some(Value::Array(req)) => req
+                .iter()
+                .filter_map(|v| v.as_str())
+                .collect::<HashSet<_>>(),
             _ => HashSet::new(),
         };
 
         let generated_required = match generated.get("required") {
-            Some(Value::Array(req)) =>
-                req
-                    .iter()
-                    .filter_map(|v| v.as_str())
-                    .collect::<HashSet<_>>(),
+            Some(Value::Array(req)) => req
+                .iter()
+                .filter_map(|v| v.as_str())
+                .collect::<HashSet<_>>(),
             _ => HashSet::new(),
         };
 
@@ -135,8 +133,7 @@ mod tests {
             if !generated_required.contains(field) {
                 println!(
                     "WARNING: Definition '{}' is missing required field '{}' in generated schema",
-                    def_name,
-                    field
+                    def_name, field
                 );
             }
         }
@@ -155,7 +152,10 @@ mod tests {
             Some(Value::Object(props)) => props,
             _ => {
                 if !original_props.is_empty() {
-                    println!("WARNING: Definition '{}' has properties in original schema but none in generated schema", def_name);
+                    println!(
+                        "WARNING: Definition '{}' has properties in original schema but none in generated schema",
+                        def_name
+                    );
                 }
                 return;
             }
@@ -166,8 +166,7 @@ mod tests {
             if !generated_props.contains_key(prop_name) {
                 println!(
                     "WARNING: Definition '{}' is missing property '{}' in generated schema",
-                    def_name,
-                    prop_name
+                    def_name, prop_name
                 );
             }
 

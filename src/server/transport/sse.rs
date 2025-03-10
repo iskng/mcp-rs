@@ -5,30 +5,31 @@
 //! - Accepts HTTP POST requests from clients at the `/message` endpoint
 //! - Routes messages between clients and the MCP server
 
-use crate::protocol::{ JSONRPCMessage, JSONRPCMessage as Message, errors::Error };
-use crate::transport::middleware::{ ClientSession, ClientSessionLayer, ClientSessionStore };
-use async_trait::async_trait;
+use crate::protocol::{JSONRPCMessage, JSONRPCMessage as Message, errors::Error};
+use crate::server::transport::middleware::{ClientSession, ClientSessionLayer, ClientSessionStore};
 use async_stream;
+use async_trait::async_trait;
 
 use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::server::transport::Transport;
 use axum::{
-    extract::{ Extension, State },
-    http::StatusCode,
-    response::{ sse::{ Event, KeepAlive, Sse }, IntoResponse },
-    routing::{ get, post },
     Router,
+    extract::{Extension, State},
+    http::StatusCode,
+    response::{
+        IntoResponse,
+        sse::{Event, KeepAlive, Sse},
+    },
+    routing::{get, post},
 };
-use tower_http::cors::{ Any, CorsLayer };
-use tokio::sync::mpsc;
-use uuid;
 use tokio::sync::RwLock;
-
-use super::Transport;
-
+use tokio::sync::mpsc;
+use tower_http::cors::{Any, CorsLayer};
+use uuid;
 /// Configuration options for the SSE server
 #[derive(Debug, Clone)]
 pub struct SseServerOptions {
@@ -124,7 +125,7 @@ impl SseServerTransport {
     /// Create a new SSE server transport with app_state
     pub fn with_app_state(
         options: SseServerOptions,
-        app_state: Arc<crate::server::server::AppState>
+        app_state: Arc<crate::server::server::AppState>,
     ) -> Self {
         let transport = Self::new(options);
         // Initialize the app_state immediately
@@ -152,7 +153,9 @@ impl SseServerTransport {
         let app_state = match self.get_app_state().await {
             Some(state) => state,
             None => {
-                return Err(Error::Protocol("No app state available for transport".to_string()));
+                return Err(Error::Protocol(
+                    "No app state available for transport".to_string(),
+                ));
             }
         };
 
@@ -178,19 +181,24 @@ impl SseServerTransport {
             // Add the session layer that will extract sessions from query params
             .layer(ClientSessionLayer::with_store(session_store))
             // Add CORS support
-            .layer(CorsLayer::new().allow_origin(Any).allow_methods(Any).allow_headers(Any));
+            .layer(
+                CorsLayer::new()
+                    .allow_origin(Any)
+                    .allow_methods(Any)
+                    .allow_headers(Any),
+            );
 
         // Start the server
         let server_addr = addr.clone();
         let server_handle = tokio::spawn(async move {
             tracing::info!("Starting SSE server on {}", addr);
-            let listener = tokio::net::TcpListener
-                ::bind(addr).await
+            let listener = tokio::net::TcpListener::bind(addr)
+                .await
                 .map_err(|e| transport_error(format!("Failed to bind to {}: {}", addr, e)))?;
 
-            axum::serve(listener, app.into_make_service()).await.map_err(|e|
-                transport_error(format!("Server error: {}", e))
-            )
+            axum::serve(listener, app.into_make_service())
+                .await
+                .map_err(|e| transport_error(format!("Server error: {}", e)))
         });
 
         // Store server information
@@ -252,25 +260,30 @@ impl Transport for SseServerTransport {
         };
 
         // Find the session by client ID using the store from app state
-        if let Some(session) = app_state.session_store.find_session_by_client_id(client_id).await {
+        if let Some(session) = app_state
+            .session_store
+            .find_session_by_client_id(client_id)
+            .await
+        {
             // Serialize the message to JSON
-            let json = serde_json
-                ::to_string(message)
+            let json = serde_json::to_string(message)
                 .map_err(|e| Error::Protocol(format!("Failed to serialize message: {}", e)))?;
 
             // Send the message to the client
-            session
-                .send_message(json).await
-                .map_err(|e|
-                    Error::Protocol(
-                        format!("Failed to send message to client {}: {}", client_id, e)
-                    )
-                )?;
+            session.send_message(json).await.map_err(|e| {
+                Error::Protocol(format!(
+                    "Failed to send message to client {}: {}",
+                    client_id, e
+                ))
+            })?;
 
             tracing::debug!("Message sent to client {}", client_id);
             Ok(())
         } else {
-            Err(Error::Protocol(format!("Client with ID {} not found", client_id)))
+            Err(Error::Protocol(format!(
+                "Client with ID {} not found",
+                client_id
+            )))
         }
     }
     /// Set the app state
@@ -282,14 +295,17 @@ impl Transport for SseServerTransport {
 }
 
 /// Handle an SSE connection
-async fn handle_sse_connection(Extension(
-    store,
-): Extension<Arc<ClientSessionStore>>) -> impl IntoResponse {
+async fn handle_sse_connection(
+    Extension(store): Extension<Arc<ClientSessionStore>>,
+) -> impl IntoResponse {
     // Generate session ID
     let session_id = uuid::Uuid::new_v4().to_string();
 
     // Add more detailed logging
-    tracing::info!("New SSE connection established! session_id = {}", session_id);
+    tracing::info!(
+        "New SSE connection established! session_id = {}",
+        session_id
+    );
 
     // Create the session-specific message endpoint URI
     let session_uri = format!("/message?session_id={}", session_id);
@@ -299,8 +315,7 @@ async fn handle_sse_connection(Extension(
     tracing::info!("Created and stored new session: {}", session_id);
 
     // Create the SSE stream
-    let stream =
-        async_stream::stream! {
+    let stream = async_stream::stream! {
         // Send the endpoint URL as the first event
         let endpoint_event = Event::default().event("endpoint").data(session_uri.clone());
         yield Ok::<_, Infallible>(endpoint_event);
@@ -350,7 +365,9 @@ async fn handle_sse_connection(Extension(
 
     // Set Content-Type and return the stream
     Sse::new(stream).keep_alive(
-        KeepAlive::new().interval(Duration::from_secs(30)).text("keep-alive")
+        KeepAlive::new()
+            .interval(Duration::from_secs(30))
+            .text("keep-alive"),
     )
 }
 
@@ -359,7 +376,7 @@ async fn handle_client_message(
     Extension(store): Extension<Arc<ClientSessionStore>>,
     Extension(mut session): Extension<ClientSession>,
     State(state): State<Arc<crate::server::server::AppState>>,
-    body: String
+    body: String,
 ) -> Result<String, StatusCode> {
     // Set up detailed error logging
     tracing::info!(
@@ -393,7 +410,11 @@ async fn handle_client_message(
         // First message from this session, generate a client ID
         let id = uuid::Uuid::new_v4().to_string();
         session.client_id = Some(id.clone());
-        tracing::info!("Assigned client_id {} to session {}", id, session.session_id);
+        tracing::info!(
+            "Assigned client_id {} to session {}",
+            id,
+            session.session_id
+        );
 
         // Update the session in the store
         store.store_session(session.clone()).await;
@@ -407,7 +428,11 @@ async fn handle_client_message(
     );
 
     // Wrap in a closure to handle any errors the same way
-    let handle_result = state.route_handler.as_ref().handle_message(message, &session).await;
+    let handle_result = state
+        .route_handler
+        .as_ref()
+        .handle_message(message, &session)
+        .await;
 
     // Process the message with the handler
     match handle_result {

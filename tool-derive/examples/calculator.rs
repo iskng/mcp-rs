@@ -4,11 +4,11 @@
 //! for different message types, such as initialization and requests.
 
 use mcp_rs::protocol::Error;
-use mcp_rs::server::Server;
-use mcp_rs::protocol::{ CallToolParams, CallToolResult };
 use mcp_rs::protocol::tools::ToToolSchema;
-use mcp_rs::transport::sse_server::{ SseServerTransport, SseServerOptions };
-use serde::{ Deserialize, Serialize };
+use mcp_rs::protocol::{CallToolParams, CallToolResult};
+use mcp_rs::server::Server;
+use mcp_rs::server::transport::sse::{SseServerOptions, SseServerTransport};
+use serde::{Deserialize, Serialize};
 use tool_derive::Tool;
 use tracing::Level;
 
@@ -42,7 +42,9 @@ pub struct Calculator {
 #[tokio::main]
 async fn main() -> Result<(), Error> {
     // Use tracing for better logging
-    tracing_subscriber::fmt().with_max_level(Level::DEBUG).init();
+    tracing_subscriber::fmt()
+        .with_max_level(Level::DEBUG)
+        .init();
     println!("---> Starting MCP server");
 
     // Create a simple SSE transport
@@ -62,12 +64,13 @@ async fn main() -> Result<(), Error> {
                 a: 0.0, // Default values
                 b: 0.0,
                 operation: Operation::Add,
-            }).to_tool_schema(),
+            })
+            .to_tool_schema(),
             |params: CallToolParams| {
                 // Deserialize directly into our type-safe struct
-                let typed_params: Calculator = serde_json
-                    ::from_value(serde_json::to_value(params.arguments).unwrap())
-                    .map_err(|e| Error::InvalidParams(format!("Invalid parameters: {}", e)))?;
+                let typed_params: Calculator =
+                    serde_json::from_value(serde_json::to_value(params.arguments).unwrap())
+                        .map_err(|e| Error::InvalidParams(format!("Invalid parameters: {}", e)))?;
 
                 // Process based on operation enum
                 let result_value = match typed_params.operation {
@@ -86,18 +89,16 @@ async fn main() -> Result<(), Error> {
                 let operation_text = format!("{:?}", typed_params.operation).to_lowercase();
                 let result_text = format!(
                     "The result of {} {} {} is {}",
-                    typed_params.a,
-                    operation_text,
-                    typed_params.b,
-                    result_value
+                    typed_params.a, operation_text, typed_params.b, result_value
                 );
 
                 // Return a text result
                 Ok(CallToolResult::text(result_text))
-            }
+            },
         )
         .with_transport(transport)
-        .build().await;
+        .build()
+        .await;
 
     match server_result {
         Ok(mut server) => {

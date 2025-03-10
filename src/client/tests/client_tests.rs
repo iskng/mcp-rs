@@ -7,17 +7,18 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::timeout;
 
+use crate::client::client::{ Client, ClientConfig };
+use crate::client::transport::BoxedDirectIOTransport;
+use crate::client::transport::DirectIOTransport;
 use crate::protocol::{
+    Error,
     JSONRPCMessage,
+    JSONRPCNotification,
     JSONRPCRequest,
     JSONRPCResponse,
-    JSONRPCNotification,
+    Method,
     RequestId,
-    Error,
 };
-use crate::client::client::{ Client, ClientConfig };
-use crate::transport::DirectIOTransport;
-use crate::transport::BoxedDirectIOTransport;
 
 /// Mock transport for testing
 struct MockTransport {
@@ -33,7 +34,7 @@ impl MockTransport {
             messages: Vec::new(),
             send_count: 0,
             receive_count: 0,
-            connected: true,
+            connected: false,
         }
     }
 
@@ -55,11 +56,11 @@ impl MockTransport {
         transport
     }
 
-    fn with_notification(method: &str) -> Self {
+    fn with_notification(method: &Method) -> Self {
         let mut transport = Self::new();
         let notification = JSONRPCNotification {
             jsonrpc: "2.0".to_string(),
-            method: method.to_string(),
+            method: method.clone(),
             params: Some(serde_json::json!({ "event": "test" })),
         };
 
@@ -69,7 +70,7 @@ impl MockTransport {
 }
 
 #[async_trait::async_trait]
-impl crate::transport::Transport for MockTransport {
+impl crate::client::transport::Transport for MockTransport {
     async fn start(&mut self) -> Result<(), Error> {
         self.connected = true;
         Ok(())
@@ -155,7 +156,7 @@ async fn test_client_send_request() {
     let request = JSONRPCRequest {
         jsonrpc: "2.0".to_string(),
         id: id.clone(),
-        method: "test".to_string(),
+        method: Method::Initialize,
         params: Some(serde_json::json!({})),
     };
 
@@ -185,12 +186,12 @@ async fn test_client_send_notification() {
     // Send a notification
     let notification = JSONRPCNotification {
         jsonrpc: "2.0".to_string(),
-        method: "test/notification".to_string(),
+        method: Method::NotificationsResourcesUpdated,
         params: Some(serde_json::json!({ "event": "test" })),
     };
 
     let result = client.send_notification(
-        "test/notification",
+        Method::NotificationsResourcesUpdated,
         serde_json::json!({ "event": "test" })
     ).await;
     assert!(result.is_ok());
@@ -202,7 +203,7 @@ async fn test_client_send_notification() {
 #[tokio::test]
 async fn test_client_notification_handler() {
     // Create a mock transport with a notification
-    let transport = MockTransport::with_notification("test/notification");
+    let transport = MockTransport::with_notification(&Method::NotificationsResourcesUpdated);
     let boxed_transport = BoxedDirectIOTransport(Box::new(transport));
 
     // Create and start client
@@ -214,7 +215,7 @@ async fn test_client_notification_handler() {
 
     // Register a notification handler
     client
-        .register_notification_handler("test/notification", move |notification| {
+        .register_notification_handler(Method::NotificationsResourcesUpdated, move |notification| {
             let tx = tx_clone.clone();
             async move {
                 let _ = tx.send(notification).await;
@@ -231,7 +232,7 @@ async fn test_client_notification_handler() {
     assert!(received.is_ok());
 
     if let Ok(Some(notification)) = received {
-        assert_eq!(notification.method, "test/notification");
+        assert_eq!(notification.method, Method::NotificationsResourcesUpdated);
     } else {
         panic!("Did not receive notification");
     }

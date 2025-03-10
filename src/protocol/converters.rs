@@ -1,18 +1,8 @@
 use crate::protocol::Error;
 use crate::protocol::{
-    BlobResourceContents,
-    CallToolResult,
-    Content,
-    Cursor,
-    EmbeddedResource,
-    ImageContent,
-    JSONRPCRequest,
-    ListToolsResult,
-    ResourceContentType,
-    Result as ProtocolResult,
-    TextContent,
-    TextResourceContents,
-    Tool,
+    BlobResourceContents, CallToolResult, Content, Cursor, EmbeddedResource, ImageContent,
+    JSONRPCRequest, ListToolsResult, ResourceContentType, Result as ProtocolResult, TextContent,
+    TextResourceContents, Tool,
 };
 use base64::Engine;
 use base64::prelude::BASE64_STANDARD;
@@ -52,11 +42,11 @@ pub fn to_tools_result(tools: Vec<Tool>, next_cursor: Option<String>) -> ListToo
 
 /// Helper to extract params from a request
 pub fn extract_params<T>(request: &JSONRPCRequest) -> Result<T, Error>
-    where T: serde::de::DeserializeOwned
+where
+    T: serde::de::DeserializeOwned,
 {
     if let Some(params) = &request.params {
-        serde_json
-            ::from_value(params.clone())
+        serde_json::from_value(params.clone())
             .map_err(|e| Error::InvalidParams(format!("Could not parse params: {}", e)))
     } else {
         Err(Error::InvalidParams("No params provided".to_string()))
@@ -67,11 +57,7 @@ pub fn extract_params<T>(request: &JSONRPCRequest) -> Result<T, Error>
 pub fn to_call_tool_result(content: Vec<Content>, is_error: bool) -> CallToolResult {
     CallToolResult {
         content,
-        is_error: if is_error {
-            Some(true)
-        } else {
-            None
-        },
+        is_error: if is_error { Some(true) } else { None },
         _meta: None,
     }
 }
@@ -108,7 +94,7 @@ pub fn to_embedded_resource(_uri: &str, content_type: ResourceContentType) -> Co
 pub fn to_text_resource_content(
     uri: &str,
     text: &str,
-    mime_type: Option<&str>
+    mime_type: Option<&str>,
 ) -> ResourceContentType {
     ResourceContentType::Text(TextResourceContents {
         uri: uri.to_string(),
@@ -121,7 +107,7 @@ pub fn to_text_resource_content(
 pub fn to_blob_resource_content(
     uri: &str,
     data: &[u8],
-    mime_type: Option<&str>
+    mime_type: Option<&str>,
 ) -> ResourceContentType {
     ResourceContentType::Blob(BlobResourceContents {
         uri: uri.to_string(),

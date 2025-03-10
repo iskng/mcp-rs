@@ -9,16 +9,11 @@ use std::sync::Arc;
 
 use crate::protocol::PROTOCOL_VERSION;
 use crate::protocol::{
-    Implementation,
-    InitializeRequest,
-    InitializeResult,
-    ResourcesCapability,
-    ServerCapabilities,
-    ToolsCapability,
-    errors::Error,
+    Implementation, InitializeRequest, InitializeResult, ResourcesCapability, ServerCapabilities,
+    ToolsCapability, errors::Error,
 };
 use crate::server::services::ServiceProvider;
-use crate::transport::middleware::ClientSession;
+use crate::server::transport::middleware::ClientSession;
 
 /// Initialize handler trait for initialization operations
 #[async_trait]
@@ -27,7 +22,7 @@ pub trait InitializeHandler: Send + Sync {
     async fn handle_initialize(
         &self,
         request: &InitializeRequest,
-        session: &ClientSession
+        session: &ClientSession,
     ) -> Result<InitializeResult, Error>;
 }
 
@@ -40,9 +35,7 @@ pub struct DefaultInitializeHandler {
 impl DefaultInitializeHandler {
     /// Create a new initialize handlermplementation: Imple
     pub fn new(service_provider: Arc<ServiceProvider>) -> Self {
-        Self {
-            service_provider,
-        }
+        Self { service_provider }
     }
 }
 
@@ -50,8 +43,8 @@ impl DefaultInitializeHandler {
 impl InitializeHandler for DefaultInitializeHandler {
     async fn handle_initialize(
         &self,
-        request: &InitializeRequest,
-        session: &ClientSession
+        _request: &InitializeRequest,
+        session: &ClientSession,
     ) -> Result<InitializeResult, Error> {
         // Log the initialization
         if let Some(id) = &session.client_id {
@@ -82,7 +75,7 @@ impl InitializeHandler for DefaultInitializeHandler {
                 resources: resource_capabilities,
                 prompts: None, // Not implemented
                 tools: tool_capabilities,
-                logging: None, // Not implemented
+                logging: None,      // Not implemented
                 experimental: None, // No experimental features
             },
             instructions: None,
@@ -156,7 +149,7 @@ impl InitializeHandlerBuilder {
     /// Add experimental capabilities
     pub fn with_experimental_capabilities(
         mut self,
-        capabilities: HashMap<String, serde_json::Value>
+        capabilities: HashMap<String, serde_json::Value>,
     ) -> Self {
         self.experimental_capabilities = Some(capabilities);
         self
@@ -200,7 +193,7 @@ impl InitializeHandler for ConfigurableInitializeHandler {
     async fn handle_initialize(
         &self,
         request: &InitializeRequest,
-        session: &ClientSession
+        session: &ClientSession,
     ) -> Result<InitializeResult, Error> {
         // Log the initialization
         if let Some(id) = &session.client_id {
@@ -223,8 +216,14 @@ impl InitializeHandler for ConfigurableInitializeHandler {
 
         // Create server info (with overrides)
         let server_info = Implementation {
-            name: self.server_name_override.clone().unwrap_or_else(|| "MCP Server".to_string()),
-            version: self.server_version_override.clone().unwrap_or_else(|| "0.1.0".to_string()),
+            name: self
+                .server_name_override
+                .clone()
+                .unwrap_or_else(|| "MCP Server".to_string()),
+            version: self
+                .server_version_override
+                .clone()
+                .unwrap_or_else(|| "0.1.0".to_string()),
         };
 
         // Create response

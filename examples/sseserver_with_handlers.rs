@@ -4,9 +4,9 @@
 //! with the redesigned transport interface.
 
 use mcp_rs::{
-    protocol::{ Error, CallToolParams, CallToolResult, tools::ToolBuilder },
+    protocol::{CallToolParams, CallToolResult, Error, tools::ToolBuilder},
     server::Server,
-    transport::sse_server::{ SseServerTransport, SseServerOptions },
+    server::transport::sse::{SseServerOptions, SseServerTransport},
 };
 use tracing_subscriber;
 
@@ -34,14 +34,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     "operation",
                     "Operation to perform",
                     &["add", "subtract", "multiply", "divide"],
-                    true
+                    true,
                 )
                 .build(),
             |params: CallToolParams| {
                 // Extract parameters
-                let args = params.arguments.ok_or_else(||
-                    Error::Protocol("Missing arguments".to_string())
-                )?;
+                let args = params
+                    .arguments
+                    .ok_or_else(|| Error::Protocol("Missing arguments".to_string()))?;
 
                 let a = args
                     .get("a")
@@ -79,10 +79,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 // Use the helper method to create a text result
                 Ok(CallToolResult::text(result_text))
-            }
+            },
         )
         .with_transport(transport)
-        .build().await;
+        .build()
+        .await;
 
     match server_result {
         Ok(mut server) => {

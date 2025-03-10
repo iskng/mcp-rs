@@ -6,16 +6,8 @@ use serde_json::Value;
 use std::collections::HashMap;
 
 use crate::protocol::{
-    CallToolParams,
-    CompleteParams,
-    CompleteArgument,
-    GetPromptParams,
-    Message,
-    PromptMessage,
-    ReadResourceParams,
+    CallToolParams, CompleteArgument, CompleteParams, GetPromptParams, ReadResourceParams,
     Reference,
-    Role,
-    TextContent,
 };
 
 /// Builder for CallToolParams
@@ -122,16 +114,12 @@ pub struct ReadResourceParamsBuilder {
 impl ReadResourceParamsBuilder {
     /// Create a new builder for ReadResourceParams
     pub fn new(uri: impl Into<String>) -> Self {
-        Self {
-            uri: uri.into(),
-        }
+        Self { uri: uri.into() }
     }
 
     /// Build the parameters
     pub fn build(self) -> ReadResourceParams {
-        ReadResourceParams {
-            uri: self.uri,
-        }
+        ReadResourceParams { uri: self.uri }
     }
 }
 
@@ -182,28 +170,20 @@ impl CompleteParamsBuilder {
         };
 
         let reference = match self.reference_type.as_str() {
-            "ref/prompt" =>
-                Reference::Prompt(
-                    serde_json
-                        ::from_value(
-                            serde_json::json!({
-                "type": "ref/prompt",
-                "name": self.reference_value
-            })
-                        )
-                        .unwrap()
-                ),
-            "ref/resource" =>
-                Reference::Resource(
-                    serde_json
-                        ::from_value(
-                            serde_json::json!({
-                "type": "ref/resource",
-                "uri": self.reference_value
-            })
-                        )
-                        .unwrap()
-                ),
+            "ref/prompt" => Reference::Prompt(
+                serde_json::from_value(serde_json::json!({
+                    "type": "ref/prompt",
+                    "name": self.reference_value
+                }))
+                .unwrap(),
+            ),
+            "ref/resource" => Reference::Resource(
+                serde_json::from_value(serde_json::json!({
+                    "type": "ref/resource",
+                    "uri": self.reference_value
+                }))
+                .unwrap(),
+            ),
             _ => panic!("Unknown reference type"),
         };
 

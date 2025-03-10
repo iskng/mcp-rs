@@ -3,58 +3,28 @@
 //! This module provides the high-level API for interacting with an MCP server.
 //! It wraps the lower-level Client and provides convenient methods for common operations.
 
+use serde_json;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
-use tokio::sync::{ mpsc, oneshot, RwLock };
-use serde_json;
-use tracing::{ debug, warn };
 use std::time::SystemTime;
+use tokio::sync::RwLock;
+use tracing::{debug, warn};
 
-use crate::protocol::{
-    CallToolParams,
-    CallToolResult,
-    ClientRequest,
-    ClientMessage,
-    ClientNotification,
-    CompleteParams,
-    CompleteResult,
-    Error,
-    GetPromptParams,
-    GetPromptResult,
-    Implementation,
-    InitializeParams,
-    InitializeRequest,
-    InitializeResult,
-    InitializedNotification,
-    JSONRPCMessage,
-    JSONRPCNotification,
-    JSONRPCRequest,
-    ListPromptsRequest,
-    ListPromptsResult,
-    ListResourceTemplatesRequest,
-    ListResourceTemplatesResult,
-    ListResourcesRequest,
-    ListResourcesResult,
-    ListToolsRequest,
-    ListToolsResult,
-    Message,
-    ProgressNotification,
-    ReadResourceParams,
-    ReadResourceRequest,
-    ReadResourceResult,
-    RequestId,
-    ResourceListChangedNotification,
-    ResourceUpdatedNotification,
-    ClientCapabilities,
-    PROTOCOL_VERSION,
-};
-use crate::transport::{ DirectIOTransport, BoxedDirectIOTransport };
-use crate::client::client::{ Client, ClientConfig };
-use crate::client::progress::{ ProgressInfo, ProgressTracker };
-use crate::client::subscription::{ Subscription, SubscriptionManager };
+use crate::client::client::{Client, ClientConfig};
 use crate::client::model::ServerInfo;
-use crate::client::notification::NotificationRouter;
+use crate::client::services::{
+    notification::NotificationRouter,
+    progress::{ProgressInfo, ProgressTracker},
+    subscription::{Subscription, SubscriptionManager},
+};
+use crate::client::transport::{BoxedDirectIOTransport, DirectIOTransport};
+use crate::protocol::{
+    CallToolParams, CallToolResult, ClientCapabilities, CompleteParams, CompleteResult, Error,
+    GetPromptResult, Implementation, InitializeParams, InitializeResult, JSONRPCNotification,
+    JSONRPCRequest, ListPromptsResult, ListResourceTemplatesResult, ListResourcesResult,
+    ListToolsResult, Message, Method, PROTOCOL_VERSION, ReadResourceParams, ReadResourceResult,
+    RequestId, ResourceListChangedNotification, ResourceUpdatedNotification,
+};
 
 /// Configuration for client session
 #[derive(Debug, Clone)]
@@ -99,8 +69,8 @@ impl ClientSession {
         // Create the client with the wrapped transport
         let client = Arc::new(Client::new(boxed_transport, ClientConfig::default()));
 
-        // Create the notification router from the client
-        let notification_router = client.notification_router().clone();
+        // Create separate notification router instead of using client's to avoid circular references
+        let notification_router = Arc::new(NotificationRouter::new());
 
         Self {
             client,
@@ -122,7 +92,9 @@ impl ClientSession {
 
     /// Generate a unique request ID based on current timestamp
     fn generate_id(&self) -> RequestId {
-        let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default();
+        let now = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap_or_default();
         RequestId::Number((now.as_secs() as i64) * 1000 + (now.subsec_millis() as i64))
     }
 
@@ -141,7 +113,9 @@ impl ClientSession {
 
         // For now, return a dummy initialize result since we can't access client.send_request
         debug!("initialize called - this is a placeholder implementation");
-        Err(Error::Other("InitializeResult not implemented yet".to_string()))
+        Err(Error::Other(
+            "InitializeResult not implemented yet".to_string(),
+        ))
     }
 
     /// Shutdown the client session
@@ -167,8 +141,10 @@ impl ClientSession {
     }
 
     /// Send a request with generic params and response types
-    pub async fn send_request<P, R>(&self, method: &str, params: P) -> Result<R, Error>
-        where P: serde::Serialize + Send + Sync, R: serde::de::DeserializeOwned + Send + Sync
+    pub async fn send_request<P, R>(&self, method: Method, params: P) -> Result<R, Error>
+    where
+        P: serde::Serialize + Send + Sync,
+        R: serde::de::DeserializeOwned + Send + Sync,
     {
         // Create a request ID
         let request_id = self.generate_id();
@@ -185,65 +161,78 @@ impl ClientSession {
         let request = JSONRPCRequest {
             jsonrpc: "2.0".to_string(),
             id: request_id.clone(),
-            method: method.to_string(),
+            method: method.clone(),
             params: params_value,
         };
 
-        // For now, return an error since we can't access client methods directly
-        debug!("send_request called for method {} - this is a placeholder implementation", method);
-        Err(Error::Other(format!("Method {} not implemented yet", method)))
+        Err(Error::Other(format!(
+            "Method {} not implemented yet",
+            method
+        )))
     }
 
     /// List resources
     pub async fn list_resources(
         &self,
-        params: Option<serde_json::Value>
+        params: Option<serde_json::Value>,
     ) -> Result<ListResourcesResult, Error> {
         // Create the query parameters
         let list_params = params.unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
 
         // For now, return a placeholder error since we can't access the client methods
         debug!("list_resources called - this is a placeholder implementation");
-        Err(Error::Other("list_resources not implemented yet".to_string()))
+        Err(Error::Other(
+            "list_resources not implemented yet".to_string(),
+        ))
     }
 
     /// List resource templates
     pub async fn list_resource_templates(&self) -> Result<ListResourceTemplatesResult, Error> {
         debug!("list_resource_templates called - this is a placeholder implementation");
-        Err(Error::Other("list_resource_templates not implemented yet".to_string()))
+        Err(Error::Other(
+            "list_resource_templates not implemented yet".to_string(),
+        ))
     }
 
     /// Read a resource
     pub async fn read_resource(
         &self,
-        params: ReadResourceParams
+        params: ReadResourceParams,
     ) -> Result<ReadResourceResult, Error> {
         debug!("read_resource called - this is a placeholder implementation");
-        Err(Error::Other("read_resource not implemented yet".to_string()))
+        Err(Error::Other(
+            "read_resource not implemented yet".to_string(),
+        ))
     }
 
     /// Create a resource
     pub async fn create_resource(
         &self,
-        params: serde_json::Value
+        params: serde_json::Value,
     ) -> Result<ReadResourceResult, Error> {
         debug!("create_resource called - this is a placeholder implementation");
-        Err(Error::Other("create_resource not implemented yet".to_string()))
+        Err(Error::Other(
+            "create_resource not implemented yet".to_string(),
+        ))
     }
 
     /// Update a resource
     pub async fn update_resource(
         &self,
-        params: serde_json::Value
+        params: serde_json::Value,
     ) -> Result<ReadResourceResult, Error> {
         debug!("update_resource called - this is a placeholder implementation");
-        Err(Error::Other("update_resource not implemented yet".to_string()))
+        Err(Error::Other(
+            "update_resource not implemented yet".to_string(),
+        ))
     }
 
     /// Delete a resource
     pub async fn delete_resource(&self, uri: String) -> Result<(), Error> {
         debug!("delete_resource called - this is a placeholder implementation");
-        Err(Error::Other("delete_resource not implemented yet".to_string()))
+        Err(Error::Other(
+            "delete_resource not implemented yet".to_string(),
+        ))
     }
 
     /// List prompts
@@ -256,7 +245,7 @@ impl ClientSession {
     pub async fn get_prompt(
         &self,
         name: &str,
-        arguments: Option<HashMap<String, serde_json::Value>>
+        arguments: Option<HashMap<String, serde_json::Value>>,
     ) -> Result<GetPromptResult, Error> {
         debug!("get_prompt called - this is a placeholder implementation");
         Err(Error::Other("get_prompt not implemented yet".to_string()))
@@ -291,14 +280,17 @@ impl ClientSession {
         let progress_sub = self.progress_tracker.subscribe();
 
         // Convert to subscription type
-        self.subscription_manager.create_subscription(progress_sub, "progress".to_string())
+        self.subscription_manager
+            .create_subscription(progress_sub, "progress".to_string())
     }
 
     /// Subscribe to resource list changes
     pub async fn subscribe_resource_list_changes(
-        &self
+        &self,
     ) -> Subscription<ResourceListChangedNotification> {
-        self.subscription_manager.subscribe_resource_list_changes().await
+        self.subscription_manager
+            .subscribe_resource_list_changes()
+            .await
     }
 
     /// Subscribe to resource updates
@@ -349,12 +341,12 @@ impl ClientSessionBuilder {
         // Create the client with the wrapped transport
         let client = Arc::new(Client::new(self.transport, ClientConfig::default()));
 
-        // Create the notification router from the client
-        let notification_router = client.notification_router().clone();
-
+        // Create client session directly without referencing other parts of client
         ClientSession {
             client,
-            subscription_manager: Arc::new(SubscriptionManager::new(notification_router)),
+            subscription_manager: Arc::new(SubscriptionManager::new(Arc::new(
+                NotificationRouter::new(),
+            ))),
             progress_tracker: Arc::new(ProgressTracker::new()),
             config: self.config,
             server_info: RwLock::new(None),
@@ -404,9 +396,8 @@ impl Clone for ClientSession {
             progress_tracker: self.progress_tracker.clone(),
             config: self.config.clone(),
             server_info: RwLock::new(
-                tokio::runtime::Handle
-                    ::current()
-                    .block_on(async { self.server_info.read().await.clone() })
+                tokio::runtime::Handle::current()
+                    .block_on(async { self.server_info.read().await.clone() }),
             ),
         }
     }

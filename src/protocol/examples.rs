@@ -1,10 +1,7 @@
 use crate::protocol::tools::{
-    CallToolResultBuilder,
-    ToolArgumentsBuilder,
-    ToolBuilder,
-    ToolParameters,
+    CallToolResultBuilder, ToolArgumentsBuilder, ToolBuilder, ToolParameters,
 };
-use crate::protocol::{ CallToolParams, CallToolResult, Tool };
+use crate::protocol::{CallToolParams, CallToolResult, Tool};
 
 /// This file contains migration examples showing how to move from the old tools API to the new one
 
@@ -66,7 +63,9 @@ pub fn example_create_tool_result() -> CallToolResult {
     //     .build();
 
     // New approach 1: using builder
-    let result = CallToolResultBuilder::new().add_text("The result is: 8").build();
+    let result = CallToolResultBuilder::new()
+        .add_text("The result is: 8")
+        .build();
 
     // New approach 3: using static method
     let _result3 = CallToolResult::text("The result is: 8");

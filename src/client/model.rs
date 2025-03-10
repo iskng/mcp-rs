@@ -3,9 +3,7 @@
 //! This module defines additional types needed for the client implementation
 //! that mirror or extend the protocol types.
 
-use serde::{ Deserialize, Serialize };
-use serde_json::Value;
-use std::collections::HashMap;
+use serde::{Deserialize, Serialize};
 
 /// Client information
 #[derive(Debug, Clone, Serialize, Deserialize)]

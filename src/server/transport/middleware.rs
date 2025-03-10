@@ -2,9 +2,9 @@ use axum::http::Request;
 use futures::future::BoxFuture;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::task::{ Context, Poll };
-use tokio::sync::{ Mutex, mpsc };
-use tower::{ Layer, Service };
+use std::task::{Context, Poll};
+use tokio::sync::{Mutex, mpsc};
+use tower::{Layer, Service};
 use uuid::Uuid;
 
 /// Represents a client session with its message channel
@@ -70,7 +70,7 @@ impl ClientSession {
     pub async fn set_value<T: serde::Serialize>(
         &self,
         key: &str,
-        value: T
+        value: T,
     ) -> Result<(), serde_json::Error> {
         let value_json = serde_json::to_value(value)?;
         let mut data = self.data.lock().await;
@@ -81,7 +81,8 @@ impl ClientSession {
     /// Retrieve a value from the session
     pub async fn get_value<T: serde::de::DeserializeOwned>(&self, key: &str) -> Option<T> {
         let data = self.data.lock().await;
-        data.get(key).and_then(|value| serde_json::from_value(value.clone()).ok())
+        data.get(key)
+            .and_then(|value| serde_json::from_value(value.clone()).ok())
     }
 }
 
@@ -194,12 +195,11 @@ pub struct SessionMiddleware<S> {
     store: Arc<ClientSessionStore>,
 }
 
-impl<S, ReqBody> Service<Request<ReqBody>>
-    for SessionMiddleware<S>
-    where
-        S: Service<Request<ReqBody>, Response = axum::response::Response> + Clone + Send + 'static,
-        S::Future: Send + 'static,
-        ReqBody: Send + 'static
+impl<S, ReqBody> Service<Request<ReqBody>> for SessionMiddleware<S>
+where
+    S: Service<Request<ReqBody>, Response = axum::response::Response> + Clone + Send + 'static,
+    S::Future: Send + 'static,
+    ReqBody: Send + 'static,
 {
     type Response = S::Response;
     type Error = S::Error;
@@ -219,16 +219,12 @@ impl<S, ReqBody> Service<Request<ReqBody>>
             tracing::debug!("Session middleware processing request to: {}", req.uri());
 
             // Extract session_id from query parameters
-            let session_id = req
-                .uri()
-                .query()
-                .and_then(|q| {
-                    tracing::trace!("Parsing query parameters: {}", q);
-                    url::form_urlencoded
-                        ::parse(q.as_bytes())
-                        .find(|(key, _)| key == "session_id")
-                        .map(|(_, value)| value.to_string())
-                });
+            let session_id = req.uri().query().and_then(|q| {
+                tracing::trace!("Parsing query parameters: {}", q);
+                url::form_urlencoded::parse(q.as_bytes())
+                    .find(|(key, _)| key == "session_id")
+                    .map(|(_, value)| value.to_string())
+            });
 
             tracing::debug!(
                 "Session middleware: processing request with session_id: {:?}",

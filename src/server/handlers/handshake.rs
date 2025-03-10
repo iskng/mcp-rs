@@ -7,14 +7,11 @@ use async_trait::async_trait;
 use std::sync::Arc;
 
 use crate::protocol::{
-    CancelledNotification,
-    InitializedNotification,
-    PingRequest,
-    ProgressNotification,
+    CancelledNotification, InitializedNotification, PingRequest, ProgressNotification,
     errors::Error,
 };
 use crate::server::services::ServiceProvider;
-use crate::transport::middleware::ClientSession;
+use crate::server::transport::middleware::ClientSession;
 
 /// Result of ping operation - response to ping request
 #[derive(serde::Serialize)]
@@ -32,28 +29,28 @@ pub trait HandshakeHandler: Send + Sync {
     async fn handle_ping(
         &self,
         request: &PingRequest,
-        session: &ClientSession
+        session: &ClientSession,
     ) -> Result<PingResult, Error>;
 
     /// Handle initialized notification
     async fn handle_initialized(
         &self,
         notification: &InitializedNotification,
-        session: &ClientSession
+        session: &ClientSession,
     ) -> Result<(), Error>;
 
     /// Handle cancelled notification
     async fn handle_cancelled(
         &self,
         notification: &CancelledNotification,
-        session: &ClientSession
+        session: &ClientSession,
     ) -> Result<(), Error>;
 
     /// Handle progress notification
     async fn handle_progress(
         &self,
         notification: &ProgressNotification,
-        session: &ClientSession
+        session: &ClientSession,
     ) -> Result<(), Error>;
 }
 
@@ -75,7 +72,7 @@ impl HandshakeHandler for DefaultHandshakeHandler {
     async fn handle_ping(
         &self,
         request: &PingRequest,
-        session: &ClientSession
+        session: &ClientSession,
     ) -> Result<PingResult, Error> {
         // Log the ping
         if let Some(id) = &session.client_id {
@@ -85,11 +82,11 @@ impl HandshakeHandler for DefaultHandshakeHandler {
         }
 
         // Prepare content based on request params
-        let content = if
-            let Some(content) = request.params
-                .as_ref()
-                .and_then(|p| p.get("content"))
-                .and_then(|v| v.as_str())
+        let content = if let Some(content) = request
+            .params
+            .as_ref()
+            .and_then(|p| p.get("content"))
+            .and_then(|v| v.as_str())
         {
             content.to_string()
         } else {
@@ -106,7 +103,7 @@ impl HandshakeHandler for DefaultHandshakeHandler {
     async fn handle_initialized(
         &self,
         notification: &InitializedNotification,
-        session: &ClientSession
+        session: &ClientSession,
     ) -> Result<(), Error> {
         // Log the initialization
         if let Some(id) = &session.client_id {
@@ -121,7 +118,7 @@ impl HandshakeHandler for DefaultHandshakeHandler {
     async fn handle_cancelled(
         &self,
         notification: &CancelledNotification,
-        session: &ClientSession
+        session: &ClientSession,
     ) -> Result<(), Error> {
         // Get the ID from params
         let id = &notification.params.request_id;
@@ -142,7 +139,7 @@ impl HandshakeHandler for DefaultHandshakeHandler {
     async fn handle_progress(
         &self,
         notification: &ProgressNotification,
-        session: &ClientSession
+        session: &ClientSession,
     ) -> Result<(), Error> {
         // Get the progress info from params
         let params = &notification.params;

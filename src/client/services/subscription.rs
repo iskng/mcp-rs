@@ -4,23 +4,18 @@
 //! It allows clients to subscribe to specific types of notifications and
 //! receive them in a type-safe manner.
 
+use futures::stream::{Stream, StreamExt};
 use std::fmt;
 use std::pin::Pin;
 use std::sync::Arc;
-use std::task::{ Context, Poll };
-use futures::stream::{ Stream, StreamExt };
-use tokio::sync::{ mpsc, oneshot, broadcast };
-use tracing::{ debug, warn };
+use std::task::{Context, Poll};
+use tokio::sync::{broadcast, mpsc, oneshot};
+use tracing::{debug, warn};
 
-use crate::client::notification::NotificationRouter;
+use crate::client::services::notification::NotificationRouter;
 use crate::protocol::{
-    Error,
-    JSONRPCMessage,
-    JSONRPCNotification,
-    ProgressNotification,
-    ResourceListChangedNotification,
+    Error, JSONRPCNotification, Method, ProgressNotification, ResourceListChangedNotification,
     ResourceUpdatedNotification,
-    ServerNotification,
 };
 
 /// A token that cancels a subscription when dropped
@@ -31,7 +26,9 @@ pub struct CancelToken {
 
 impl fmt::Debug for CancelToken {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("CancelToken").field("subscription_id", &self.subscription_id).finish()
+        f.debug_struct("CancelToken")
+            .field("subscription_id", &self.subscription_id)
+            .finish()
     }
 }
 
@@ -114,7 +111,7 @@ impl SubscriptionManager {
         let (tx, rx) = mpsc::channel(100);
 
         // Create a cancellation channel
-        let (cancel_tx, mut cancel_rx) = oneshot::channel();
+        let (cancel_tx, cancel_rx) = oneshot::channel();
 
         // Generate a subscription ID
         let subscription_id = format!("all-{}", uuid::Uuid::new_v4());
@@ -125,7 +122,7 @@ impl SubscriptionManager {
         // Register a handler for all notifications
         self.notification_router
             .register_handler(
-                "*".to_string(),
+                Method::NotificationsAll,
                 Box::new(move |notification| {
                     let tx = tx_clone.clone();
                     Box::pin(async move {
@@ -135,8 +132,9 @@ impl SubscriptionManager {
                         }
                         Ok(())
                     })
-                })
-            ).await
+                }),
+            )
+            .await
             .expect("Failed to register notification handler");
 
         // Create a task that will close the channel when the cancellation token is dropped
@@ -149,10 +147,13 @@ impl SubscriptionManager {
         });
 
         // Create the subscription
-        Subscription::new(rx, CancelToken {
-            cancel_tx: Some(cancel_tx),
-            subscription_id,
-        })
+        Subscription::new(
+            rx,
+            CancelToken {
+                cancel_tx: Some(cancel_tx),
+                subscription_id,
+            },
+        )
     }
 
     /// Subscribe to progress notifications
@@ -161,7 +162,7 @@ impl SubscriptionManager {
         let (tx, rx) = mpsc::channel(100);
 
         // Create a cancellation channel
-        let (cancel_tx, mut cancel_rx) = oneshot::channel();
+        let (cancel_tx, cancel_rx) = oneshot::channel();
 
         // Generate a subscription ID
         let subscription_id = format!("progress-{}", uuid::Uuid::new_v4());
@@ -172,24 +173,26 @@ impl SubscriptionManager {
         // Register a handler for progress notifications
         self.notification_router
             .register_handler(
-                "notifications/progress".to_string(),
+                Method::NotificationsProgress,
                 Box::new(move |notification| {
                     let tx = tx_clone.clone();
                     Box::pin(async move {
                         // Parse the notification into a progress notification
-                        match
-                            serde_json::from_value::<ProgressNotification>(
-                                notification.params
-                                    .clone()
-                                    .unwrap_or(serde_json::Value::Object(serde_json::Map::new()))
-                            )
-                        {
+                        match serde_json::from_value::<ProgressNotification>(
+                            notification
+                                .params
+                                .clone()
+                                .unwrap_or(serde_json::Value::Object(serde_json::Map::new())),
+                        ) {
                             Ok(progress) => {
                                 if let Err(e) = tx.send(progress).await {
-                                    warn!("Failed to send progress notification to subscriber: {}", e);
-                                    return Err(
-                                        Error::Other("Subscriber channel closed".to_string())
+                                    warn!(
+                                        "Failed to send progress notification to subscriber: {}",
+                                        e
                                     );
+                                    return Err(Error::Other(
+                                        "Subscriber channel closed".to_string(),
+                                    ));
                                 }
                             }
                             Err(e) => {
@@ -199,8 +202,9 @@ impl SubscriptionManager {
 
                         Ok(())
                     })
-                })
-            ).await
+                }),
+            )
+            .await
             .expect("Failed to register notification handler");
 
         // Create a task that will close the channel when the cancellation token is dropped
@@ -213,10 +217,13 @@ impl SubscriptionManager {
         });
 
         // Create the subscription
-        Subscription::new(rx, CancelToken {
-            cancel_tx: Some(cancel_tx),
-            subscription_id,
-        })
+        Subscription::new(
+            rx,
+            CancelToken {
+                cancel_tx: Some(cancel_tx),
+                subscription_id,
+            },
+        )
     }
 
     /// Subscribe to resource updated notifications
@@ -225,7 +232,7 @@ impl SubscriptionManager {
         let (tx, rx) = mpsc::channel(100);
 
         // Create a cancellation channel
-        let (cancel_tx, mut cancel_rx) = oneshot::channel();
+        let (cancel_tx, cancel_rx) = oneshot::channel();
 
         // Generate a subscription ID
         let subscription_id = format!("resource-updates-{}", uuid::Uuid::new_v4());
@@ -236,7 +243,7 @@ impl SubscriptionManager {
         // Register a handler for resource updated notifications
         self.notification_router
             .register_handler(
-                "resources/updated".to_string(),
+                Method::NotificationsResourcesUpdated,
                 Box::new(move |notification| {
                     let tx = tx_clone.clone();
                     Box::pin(async move {
@@ -277,21 +284,24 @@ impl SubscriptionManager {
         });
 
         // Create the subscription
-        Subscription::new(rx, CancelToken {
-            cancel_tx: Some(cancel_tx),
-            subscription_id,
-        })
+        Subscription::new(
+            rx,
+            CancelToken {
+                cancel_tx: Some(cancel_tx),
+                subscription_id,
+            },
+        )
     }
 
     /// Subscribe to resource list changed notifications
     pub async fn subscribe_resource_list_changes(
-        &self
+        &self,
     ) -> Subscription<ResourceListChangedNotification> {
         // Create a channel for notifications
         let (tx, rx) = mpsc::channel(100);
 
         // Create a cancellation channel
-        let (cancel_tx, mut cancel_rx) = oneshot::channel();
+        let (cancel_tx, cancel_rx) = oneshot::channel();
 
         // Generate a subscription ID
         let subscription_id = format!("resource-list-changes-{}", uuid::Uuid::new_v4());
@@ -302,7 +312,7 @@ impl SubscriptionManager {
         // Register a handler for resource list changed notifications
         self.notification_router
             .register_handler(
-                "resources/listChanged".to_string(),
+                Method::NotificationsResourcesListChanged,
                 Box::new(move |notification| {
                     let tx = tx_clone.clone();
                     Box::pin(async move {
@@ -343,21 +353,26 @@ impl SubscriptionManager {
         });
 
         // Create the subscription
-        Subscription::new(rx, CancelToken {
-            cancel_tx: Some(cancel_tx),
-            subscription_id,
-        })
+        Subscription::new(
+            rx,
+            CancelToken {
+                cancel_tx: Some(cancel_tx),
+                subscription_id,
+            },
+        )
     }
 
     /// Subscribe to filtered notifications
-    pub async fn subscribe_filtered<F, T>(&self, method: &str, filter: F) -> Subscription<T>
-        where F: Fn(JSONRPCNotification) -> Option<T> + Send + Sync + 'static, T: Send + 'static
+    pub async fn subscribe_filtered<F, T>(&self, method: Method, filter: F) -> Subscription<T>
+    where
+        F: Fn(JSONRPCNotification) -> Option<T> + Send + Sync + 'static,
+        T: Send + 'static,
     {
         // Create a channel for notifications
         let (tx, rx) = mpsc::channel(100);
 
         // Create a cancellation channel
-        let (cancel_tx, mut cancel_rx) = oneshot::channel();
+        let (cancel_tx, cancel_rx) = oneshot::channel();
 
         // Generate a subscription ID
         let subscription_id = format!("filtered-{}-{}", method, uuid::Uuid::new_v4());
@@ -369,7 +384,7 @@ impl SubscriptionManager {
         // Register a handler for the specified method
         self.notification_router
             .register_handler(
-                method.to_string(),
+                method.clone(),
                 Box::new(move |notification| {
                     let tx = tx.clone();
                     let filter = filter_clone.clone();
@@ -384,8 +399,9 @@ impl SubscriptionManager {
 
                         Ok(())
                     })
-                })
-            ).await
+                }),
+            )
+            .await
             .expect("Failed to register notification handler");
 
         // Create a task that will close the channel when the cancellation token is dropped
@@ -398,19 +414,23 @@ impl SubscriptionManager {
         });
 
         // Create the subscription
-        Subscription::new(rx, CancelToken {
-            cancel_tx: Some(cancel_tx),
-            subscription_id,
-        })
+        Subscription::new(
+            rx,
+            CancelToken {
+                cancel_tx: Some(cancel_tx),
+                subscription_id,
+            },
+        )
     }
 
     /// Create a subscription from any receiver
     pub fn create_subscription<T>(
         &self,
         mut broadcast_rx: broadcast::Receiver<T>,
-        subscription_id: String
+        subscription_id: String,
     ) -> Subscription<T>
-        where T: Clone + Send + 'static
+    where
+        T: Clone + Send + 'static,
     {
         // Convert broadcast to mpsc channel
         let (tx, rx) = mpsc::channel(100);
@@ -424,7 +444,7 @@ impl SubscriptionManager {
                 tokio::select! {
                     // Wait for cancellation
                     _ = &mut cancel_rx => break,
-                    
+
                     // Forward messages
                     result = broadcast_rx.recv() => {
                         match result {
@@ -445,9 +465,12 @@ impl SubscriptionManager {
         });
 
         // Create the subscription
-        Subscription::new(rx, CancelToken {
-            cancel_tx: Some(cancel_tx),
-            subscription_id,
-        })
+        Subscription::new(
+            rx,
+            CancelToken {
+                cancel_tx: Some(cancel_tx),
+                subscription_id,
+            },
+        )
     }
 }

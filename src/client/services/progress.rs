@@ -5,11 +5,11 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{ broadcast, mpsc, Mutex, RwLock };
-use tracing::{ debug, warn };
+use tokio::sync::{RwLock, broadcast, mpsc};
+use tracing::{debug, warn};
 
-use crate::client::notification::NotificationRouter;
-use crate::protocol::{ Error, ProgressNotification, ProgressParams, ProgressToken };
+use crate::client::services::notification::NotificationRouter;
+use crate::protocol::{Error, Method, ProgressNotification, ProgressToken};
 
 /// Status of a progress operation
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -99,42 +99,43 @@ impl ProgressTracker {
         let tracker = Arc::new(self.clone());
 
         // Register a handler for progress notifications
-        notification_router.register_handler(
-            "notifications/progress".to_string(),
-            Box::new(move |notification| {
-                let progress_tx = progress_tx.clone();
-                let tracker = tracker.clone();
+        notification_router
+            .register_handler(
+                Method::NotificationsProgress,
+                Box::new(move |notification| {
+                    let progress_tx = progress_tx.clone();
+                    let tracker: Arc<ProgressTracker> = tracker.clone();
 
-                Box::pin(async move {
-                    // Parse the notification as a progress notification
-                    match
-                        serde_json::from_value::<ProgressNotification>(
-                            notification.params
+                    Box::pin(async move {
+                        // Parse the notification as a progress notification
+                        match serde_json::from_value::<ProgressNotification>(
+                            notification
+                                .params
                                 .clone()
-                                .unwrap_or(serde_json::Value::Object(serde_json::Map::new()))
-                        )
-                    {
-                        Ok(progress) => {
-                            // Convert to ProgressInfo
-                            let info = ProgressInfo::from(progress.clone());
+                                .unwrap_or(serde_json::Value::Object(serde_json::Map::new())),
+                        ) {
+                            Ok(progress) => {
+                                // Convert to ProgressInfo
+                                let info = ProgressInfo::from(progress.clone());
 
-                            // Update the active progress map
-                            tracker.update_progress(info.clone()).await;
+                                // Update the active progress map
+                                tracker.update_progress(info.clone()).await;
 
-                            // Broadcast the progress update
-                            if let Err(e) = progress_tx.send(info) {
-                                debug!("Failed to broadcast progress update: {}", e);
+                                // Broadcast the progress update
+                                if let Err(e) = progress_tx.send(info) {
+                                    debug!("Failed to broadcast progress update: {}", e);
+                                }
+                            }
+                            Err(e) => {
+                                warn!("Failed to parse progress notification: {}", e);
                             }
                         }
-                        Err(e) => {
-                            warn!("Failed to parse progress notification: {}", e);
-                        }
-                    }
 
-                    Ok(())
-                })
-            })
-        ).await?;
+                        Ok(())
+                    })
+                }),
+            )
+            .await?;
 
         Ok(())
     }
@@ -147,7 +148,10 @@ impl ProgressTracker {
             // For completed, failed, or cancelled, remove from active tracking
             ProgressStatus::Completed | ProgressStatus::Failed | ProgressStatus::Cancelled => {
                 active.remove(&info.token);
-                debug!("Progress operation {} completed with status {:?}", info.token, info.status);
+                debug!(
+                    "Progress operation {} completed with status {:?}",
+                    info.token, info.status
+                );
             }
             // For running, update or add to active tracking
             ProgressStatus::Running => {
@@ -206,15 +210,12 @@ impl ProgressTracker {
                     return Ok(info);
                 }
                 ProgressStatus::Failed => {
-                    return Err(
-                        Error::Other(
-                            format!(
-                                "Operation {} failed: {}",
-                                token,
-                                info.message.unwrap_or_else(|| "No error message".to_string())
-                            )
-                        )
-                    );
+                    return Err(Error::Other(format!(
+                        "Operation {} failed: {}",
+                        token,
+                        info.message
+                            .unwrap_or_else(|| "No error message".to_string())
+                    )));
                 }
                 ProgressStatus::Cancelled => {
                     return Err(Error::Other(format!("Operation {} was cancelled", token)));
@@ -230,15 +231,12 @@ impl ProgressTracker {
                     return Ok(info);
                 }
                 ProgressStatus::Failed => {
-                    return Err(
-                        Error::Other(
-                            format!(
-                                "Operation {} failed: {}",
-                                token,
-                                info.message.unwrap_or_else(|| "No error message".to_string())
-                            )
-                        )
-                    );
+                    return Err(Error::Other(format!(
+                        "Operation {} failed: {}",
+                        token,
+                        info.message
+                            .unwrap_or_else(|| "No error message".to_string())
+                    )));
                 }
                 ProgressStatus::Cancelled => {
                     return Err(Error::Other(format!("Operation {} was cancelled", token)));
@@ -248,7 +246,10 @@ impl ProgressTracker {
         }
 
         // If we get here, the channel closed without completion
-        Err(Error::Other(format!("Progress tracking for {} ended without completion", token)))
+        Err(Error::Other(format!(
+            "Progress tracking for {} ended without completion",
+            token
+        )))
     }
 }
 

@@ -7,42 +7,39 @@
 // Export submodules
 pub mod client;
 pub mod clientsession;
-pub mod lifecycle;
-pub mod notification;
-pub mod request;
-pub mod subscription;
-pub mod progress;
 pub mod domain;
-pub mod utils;
+pub mod handlers;
 pub mod model;
+pub mod services;
+pub mod transport;
+pub mod utils;
 
 // Re-export key types for easier access
-pub use client::{ Client, ClientBuilder, ClientConfig };
+pub use client::{Client, ClientBuilder, ClientConfig};
 pub use clientsession::{
-    ClientSession,
-    ClientSessionBuilder,
-    ClientSessionConfig,
-    ClientSessionGuard,
+    ClientSession, ClientSessionBuilder, ClientSessionConfig, ClientSessionGuard,
 };
-pub use lifecycle::{ LifecycleManager, LifecycleState };
-pub use notification::NotificationRouter;
-pub use request::RequestManager;
-pub use subscription::{ Subscription, SubscriptionManager };
-pub use progress::{ ProgressInfo, ProgressStatus, ProgressTracker };
 pub use model::ClientInfo;
+pub use services::{
+    lifecycle::{LifecycleManager, LifecycleState},
+    notification::NotificationRouter,
+    progress::{ProgressInfo, ProgressStatus, ProgressTracker},
+    request::RequestManager,
+    subscription::{Subscription, SubscriptionManager},
+};
 
 // Re-export domain traits for easier usage
 pub use domain::resources::ResourceOperations;
 pub use domain::tools::ToolOperations;
 
-use crate::transport::{ DirectIOTransport, BoxedDirectIOTransport };
+use crate::client::transport::{BoxedDirectIOTransport, DirectIOTransport, sse::SseTransport};
 use crate::protocol::Error;
 
 /// Connect to an MCP server using the provided transport
 pub async fn connect<T: DirectIOTransport + 'static>(
     transport: T,
     client_name: Option<String>,
-    client_version: Option<String>
+    client_version: Option<String>,
 ) -> Result<ClientSession, Error> {
     // Box the transport
     let boxed_transport = Box::new(transport);
@@ -70,55 +67,48 @@ pub async fn connect<T: DirectIOTransport + 'static>(
 }
 
 /// Connect to an MCP server using stdio transport
-#[cfg(feature = "stdio")]
-pub async fn connect_stdio(
-    command: &str,
-    args: Vec<&str>,
-    client_name: Option<String>,
-    client_version: Option<String>
-) -> Result<ClientSession, Error> {
-    use crate::transport::stdio::StdioTransport;
+// pub async fn connect_stdio(
+//     client_name: Option<String>,
+//     client_version: Option<String>
+// ) -> Result<ClientSession, Error> {
+//     use crate::client::transport::stdio::StdioTransport;
 
-    // Create stdio transport
-    let transport = StdioTransport::new(command, args).await?;
+//     // Create stdio transport
+//     let transport = StdioTransport::new();
 
-    // Connect using the transport
-    connect(transport, client_name, client_version).await
-}
+//     // Connect using the transport
+//     connect(transport, client_name, client_version).await
+// }
 
 /// Connect to an MCP server using SSE transport
-#[cfg(feature = "sse")]
 pub async fn connect_sse(
     url: &str,
     headers: Option<std::collections::HashMap<String, String>>,
     client_name: Option<String>,
-    client_version: Option<String>
+    client_version: Option<String>,
 ) -> Result<ClientSession, Error> {
-    use crate::transport::sse::SSETransport;
-
     // Create SSE transport
-    let transport = SSETransport::new(url, headers).await?;
+    let transport = SseTransport::new(url).await?;
 
     // Connect using the transport
     connect(transport, client_name, client_version).await
 }
 
 /// Connect to an MCP server using WebSocket transport
-#[cfg(feature = "websocket")]
-pub async fn connect_websocket(
-    url: &str,
-    headers: Option<std::collections::HashMap<String, String>>,
-    client_name: Option<String>,
-    client_version: Option<String>
-) -> Result<ClientSession, Error> {
-    use crate::transport::websocket::WebSocketTransport;
+// pub async fn connect_websocket(
+//     url: &str,
+//     headers: Option<std::collections::HashMap<String, String>>,
+//     client_name: Option<String>,
+//     client_version: Option<String>
+// ) -> Result<ClientSession, Error> {
+//     use crate::client::transport::websocket::WebSocketTransport;
 
-    // Create WebSocket transport
-    let transport = WebSocketTransport::new(url, headers).await?;
+//     // Create WebSocket transport
+//     let transport = WebSocketTransport::new(url, headers).await?;
 
-    // Connect using the transport
-    connect(transport, client_name, client_version).await
-}
+//     // Connect using the transport
+//     connect(transport, client_name, client_version).await
+// }
 
 #[cfg(test)]
 pub mod tests;

@@ -4,48 +4,28 @@
 //! that pattern matches on message types and dispatches to domain-specific handlers.
 
 use async_trait::async_trait;
-use tracing::info;
 use std::sync::Arc;
+use tracing::info;
 
 use super::handshake::PingResult;
 use crate::protocol::Error;
 use crate::protocol::{
-    CallToolRequest,
-    CallToolResult,
-    CancelledNotification,
-    ClientMessage,
-    ClientNotification,
-    ClientRequest,
-    InitializeRequest,
-    InitializeResult,
-    InitializedNotification,
-    JSONRPCMessage,
-    ListResourceTemplatesRequest,
-    ListResourceTemplatesResult,
-    ListResourcesRequest,
-    ListResourcesResult,
-    ListToolsRequest,
-    ListToolsResult,
-    Message,
-    PingRequest,
-    ProgressNotification,
-    ReadResourceRequest,
-    ReadResourceResult,
-    RequestId,
-    RootsListChangedNotification,
-    SubscribeRequest,
-    UnsubscribeRequest,
-    response_from_typed,
+    CallToolRequest, CallToolResult, CancelledNotification, ClientMessage, ClientNotification,
+    ClientRequest, InitializeRequest, InitializeResult, InitializedNotification, JSONRPCMessage,
+    ListResourceTemplatesRequest, ListResourceTemplatesResult, ListResourcesRequest,
+    ListResourcesResult, ListToolsRequest, ListToolsResult, Message, PingRequest,
+    ProgressNotification, ReadResourceRequest, ReadResourceResult, RequestId,
+    RootsListChangedNotification, SubscribeRequest, UnsubscribeRequest, response_from_typed,
 };
 use crate::server::services::ServiceProvider;
-use crate::transport::middleware::ClientSession;
+use crate::server::transport::middleware::ClientSession;
 
 use super::handshake::DefaultHandshakeHandler;
 use super::handshake::HandshakeHandler;
-use super::initialize::{ DefaultInitializeHandler, InitializeHandler };
-use super::resources::{ DefaultResourceHandler, ResourceHandler };
+use super::initialize::{DefaultInitializeHandler, InitializeHandler};
+use super::resources::{DefaultResourceHandler, ResourceHandler};
 use super::route_handler::RouteHandler;
-use super::tools::{ DefaultToolHandler, ToolHandler };
+use super::tools::{DefaultToolHandler, ToolHandler};
 
 /// Composite server handler that implements all domain-specific functionality
 pub struct CompositeServerHandler {
@@ -85,7 +65,7 @@ impl CompositeServerHandler {
     /// Create a new composite server handler with a custom initialize handler
     pub fn with_initialize_handler(
         service_provider: Arc<ServiceProvider>,
-        initialize_handler: Box<dyn InitializeHandler>
+        initialize_handler: Box<dyn InitializeHandler>,
     ) -> Self {
         let handshake_handler = Box::new(DefaultHandshakeHandler::new(service_provider.clone()));
         let tool_handler = Box::new(DefaultToolHandler::new(service_provider.clone()));
@@ -113,7 +93,7 @@ impl CompositeServerHandler {
     async fn handle_initialize(
         &self,
         client_id: Option<&str>,
-        request: &InitializeRequest
+        request: &InitializeRequest,
     ) -> Result<InitializeResult, Error> {
         // Create a dummy session for now
         let mut session = ClientSession::new();
@@ -122,14 +102,16 @@ impl CompositeServerHandler {
         }
 
         // Call the initialize handler
-        self.initialize_handler.handle_initialize(request, &session).await
+        self.initialize_handler
+            .handle_initialize(request, &session)
+            .await
     }
 
     /// Handle ping request
     async fn handle_ping(
         &self,
         client_id: Option<&str>,
-        request: &PingRequest
+        request: &PingRequest,
     ) -> Result<PingResult, Error> {
         // Create a dummy session for now
         let mut session = ClientSession::new();
@@ -145,7 +127,7 @@ impl CompositeServerHandler {
     async fn handle_initialized(
         &self,
         client_id: Option<&str>,
-        notification: &InitializedNotification
+        notification: &InitializedNotification,
     ) -> Result<(), Error> {
         // Create a dummy session for now
         let mut session = ClientSession::new();
@@ -154,14 +136,16 @@ impl CompositeServerHandler {
         }
 
         // Call the handshake handler
-        self.handshake_handler.handle_initialized(notification, &session).await
+        self.handshake_handler
+            .handle_initialized(notification, &session)
+            .await
     }
 
     /// Handle cancelled notification
     async fn handle_cancelled(
         &self,
         client_id: Option<&str>,
-        notification: &CancelledNotification
+        notification: &CancelledNotification,
     ) -> Result<(), Error> {
         // Create a dummy session for now
         let mut session = ClientSession::new();
@@ -170,14 +154,16 @@ impl CompositeServerHandler {
         }
 
         // Call the handshake handler
-        self.handshake_handler.handle_cancelled(notification, &session).await
+        self.handshake_handler
+            .handle_cancelled(notification, &session)
+            .await
     }
 
     /// Handle progress notification
     async fn handle_progress(
         &self,
         client_id: Option<&str>,
-        notification: &ProgressNotification
+        notification: &ProgressNotification,
     ) -> Result<(), Error> {
         // Create a dummy session for now
         let mut session = ClientSession::new();
@@ -186,7 +172,9 @@ impl CompositeServerHandler {
         }
 
         // Call the handshake handler
-        self.handshake_handler.handle_progress(notification, &session).await
+        self.handshake_handler
+            .handle_progress(notification, &session)
+            .await
     }
 
     //
@@ -197,7 +185,7 @@ impl CompositeServerHandler {
     async fn handle_list_resources(
         &self,
         client_id: Option<&str>,
-        request: &ListResourcesRequest
+        request: &ListResourcesRequest,
     ) -> Result<ListResourcesResult, Error> {
         // Create a dummy session for now
         let mut session = ClientSession::new();
@@ -206,14 +194,16 @@ impl CompositeServerHandler {
         }
 
         // Call the resource handler
-        self.resource_handler.handle_list_resources(request, &session).await
+        self.resource_handler
+            .handle_list_resources(request, &session)
+            .await
     }
 
     /// Handle read resource request
     async fn handle_read_resource(
         &self,
         client_id: Option<&str>,
-        request: &ReadResourceRequest
+        request: &ReadResourceRequest,
     ) -> Result<ReadResourceResult, Error> {
         // Create a dummy session for now
         let mut session = ClientSession::new();
@@ -222,14 +212,16 @@ impl CompositeServerHandler {
         }
 
         // Call the resource handler
-        self.resource_handler.handle_read_resource(request, &session).await
+        self.resource_handler
+            .handle_read_resource(request, &session)
+            .await
     }
 
     /// Handle list resource templates request
     async fn handle_list_templates(
         &self,
         client_id: Option<&str>,
-        request: &ListResourceTemplatesRequest
+        request: &ListResourceTemplatesRequest,
     ) -> Result<ListResourceTemplatesResult, Error> {
         // Create a dummy session for now
         let mut session = ClientSession::new();
@@ -238,14 +230,16 @@ impl CompositeServerHandler {
         }
 
         // Call the resource handler
-        self.resource_handler.handle_list_templates(request, &session).await
+        self.resource_handler
+            .handle_list_templates(request, &session)
+            .await
     }
 
     /// Handle subscribe request
     async fn handle_subscribe(
         &self,
         client_id: Option<&str>,
-        request: &SubscribeRequest
+        request: &SubscribeRequest,
     ) -> Result<(), Error> {
         // Create a dummy session for now
         let mut session = ClientSession::new();
@@ -254,14 +248,16 @@ impl CompositeServerHandler {
         }
 
         // Call the resource handler
-        self.resource_handler.handle_subscribe(request, &session).await
+        self.resource_handler
+            .handle_subscribe(request, &session)
+            .await
     }
 
     /// Handle unsubscribe request
     async fn handle_unsubscribe(
         &self,
         client_id: Option<&str>,
-        request: &UnsubscribeRequest
+        request: &UnsubscribeRequest,
     ) -> Result<(), Error> {
         // Create a dummy session for now
         let mut session = ClientSession::new();
@@ -270,14 +266,16 @@ impl CompositeServerHandler {
         }
 
         // Call the resource handler
-        self.resource_handler.handle_unsubscribe(request, &session).await
+        self.resource_handler
+            .handle_unsubscribe(request, &session)
+            .await
     }
 
     /// Handle roots list changed notification
     async fn handle_roots_list_changed(
         &self,
         client_id: Option<&str>,
-        notification: &RootsListChangedNotification
+        notification: &RootsListChangedNotification,
     ) -> Result<(), Error> {
         // Create a dummy session for now
         let mut session = ClientSession::new();
@@ -286,7 +284,9 @@ impl CompositeServerHandler {
         }
 
         // Call the resource handler
-        self.resource_handler.handle_roots_list_changed(notification, &session).await
+        self.resource_handler
+            .handle_roots_list_changed(notification, &session)
+            .await
     }
 
     //
@@ -297,7 +297,7 @@ impl CompositeServerHandler {
     async fn handle_list_tools(
         &self,
         client_id: Option<&str>,
-        request: &ListToolsRequest
+        request: &ListToolsRequest,
     ) -> Result<ListToolsResult, Error> {
         // Create a dummy session for now
         let mut session = ClientSession::new();
@@ -313,7 +313,7 @@ impl CompositeServerHandler {
     async fn handle_call_tool(
         &self,
         client_id: Option<&str>,
-        request: &CallToolRequest
+        request: &CallToolRequest,
     ) -> Result<CallToolResult, Error> {
         // Create a dummy session for now
         let mut session = ClientSession::new();
@@ -334,8 +334,7 @@ impl CompositeServerHandler {
     /// Create an empty success response
     fn create_empty_response(&self, id: RequestId) -> JSONRPCMessage {
         // Create an empty result with required fields
-        let empty_result =
-            serde_json::json!({
+        let empty_result = serde_json::json!({
             "_meta": null,
             "content": {}
         });
@@ -358,7 +357,7 @@ impl RouteHandler for CompositeServerHandler {
         &self,
         id: RequestId,
         client_id: Option<&str>,
-        message: &Message
+        message: &Message,
     ) -> Result<Option<JSONRPCMessage>, Error> {
         match message {
             Message::Client(client_message) => {
@@ -415,12 +414,10 @@ impl RouteHandler for CompositeServerHandler {
                             }
 
                             // Other domains - not implemented
-                            _ =>
-                                Err(
-                                    Error::MethodNotFound(
-                                        format!("Method not implemented: {:?}", req)
-                                    )
-                                ),
+                            _ => Err(Error::MethodNotFound(format!(
+                                "Method not implemented: {:?}",
+                                req
+                            ))),
                         }
                     }
                     ClientMessage::Notification(notification) => {

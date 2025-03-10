@@ -2,23 +2,12 @@
 //!
 //! This module provides domain-specific operations for working with resources.
 
-use std::collections::HashMap;
-use std::sync::Arc;
 use async_trait::async_trait;
 use serde_json::Value;
+use std::collections::HashMap;
 
 use crate::client::clientsession::ClientSession;
-use crate::client::subscription::Subscription;
-use crate::protocol::{
-    ListResourcesResult,
-    ListResourceTemplatesResult,
-    ReadResourceParams,
-    ReadResourceResult,
-    ResourceListChangedNotification,
-    ResourceUpdatedNotification,
-    Error,
-};
-use crate::transport::Transport;
+use crate::protocol::{Error, ListResourcesResult, ReadResourceParams, ReadResourceResult};
 
 /// Extension trait for resource operations on ClientSession
 #[async_trait]
@@ -26,7 +15,7 @@ pub trait ResourceOperations {
     /// List all resources, optionally filtered by type
     async fn list_resources_by_type(
         &self,
-        resource_type: Option<String>
+        resource_type: Option<String>,
     ) -> Result<ListResourcesResult, Error>;
 
     /// Get a resource by ID
@@ -37,14 +26,14 @@ pub trait ResourceOperations {
         &self,
         template_id: &str,
         name: &str,
-        properties: Option<HashMap<String, Value>>
+        properties: Option<HashMap<String, Value>>,
     ) -> Result<ReadResourceResult, Error>;
 
     /// Update a resource's properties
     async fn update_resource_properties(
         &self,
         uri: &str,
-        properties: HashMap<String, Value>
+        properties: HashMap<String, Value>,
     ) -> Result<ReadResourceResult, Error>;
 
     /// Wait for a resource to be created or updated
@@ -55,17 +44,15 @@ pub trait ResourceOperations {
 impl ResourceOperations for ClientSession {
     async fn list_resources_by_type(
         &self,
-        resource_type: Option<String>
+        resource_type: Option<String>,
     ) -> Result<ListResourcesResult, Error> {
         // Create filter parameters based on resource type
         let params = if let Some(resource_type) = resource_type {
-            Some(
-                serde_json::json!({
+            Some(serde_json::json!({
                 "filter": {
                     "resourceType": resource_type
                 }
-            })
-            )
+            }))
         } else {
             None
         };
@@ -86,11 +73,10 @@ impl ResourceOperations for ClientSession {
         &self,
         template_id: &str,
         name: &str,
-        properties: Option<HashMap<String, Value>>
+        properties: Option<HashMap<String, Value>>,
     ) -> Result<ReadResourceResult, Error> {
         // Create the parameters
-        let mut params =
-            serde_json::json!({
+        let mut params = serde_json::json!({
             "templateId": template_id,
             "name": name
         });
@@ -98,7 +84,10 @@ impl ResourceOperations for ClientSession {
         // Add properties if specified
         if let Some(props) = properties {
             if let Some(obj) = params.as_object_mut() {
-                obj.insert("properties".to_string(), Value::Object(props.into_iter().collect()));
+                obj.insert(
+                    "properties".to_string(),
+                    Value::Object(props.into_iter().collect()),
+                );
             }
         }
 
@@ -109,11 +98,10 @@ impl ResourceOperations for ClientSession {
     async fn update_resource_properties(
         &self,
         uri: &str,
-        properties: HashMap<String, Value>
+        properties: HashMap<String, Value>,
     ) -> Result<ReadResourceResult, Error> {
         // Create the parameters
-        let params =
-            serde_json::json!({
+        let params = serde_json::json!({
             "uri": uri,
             "properties": properties
         });
@@ -133,6 +121,9 @@ impl ResourceOperations for ClientSession {
             }
         }
 
-        Err(Error::Other(format!("Subscription ended without update for resource {}", uri)))
+        Err(Error::Other(format!(
+            "Subscription ended without update for resource {}",
+            uri
+        )))
     }
 }

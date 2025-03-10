@@ -3,33 +3,36 @@
 //! This module implements the core MCP client, responsible for managing the transport,
 //! request tracking, notification routing, and lifecycle management.
 
-use async_trait::async_trait;
-use serde::de::DeserializeOwned;
-use serde::Serialize;
-use std::collections::HashMap;
-use std::sync::Arc;
-use std::sync::atomic::{ AtomicI64, Ordering };
-use std::time::Duration;
-use tokio::sync::{ mpsc, Mutex, oneshot, RwLock };
-use tokio::task::JoinHandle;
-use tokio::time::timeout;
-use tracing::{ debug, error, info, warn };
+use crate::client::transport::{ DirectIOTransport, Transport };
 use crate::protocol::{
-    JSONRPCError,
+    ClientMessage,
+    Error,
     JSONRPCMessage,
     JSONRPCNotification,
     JSONRPCRequest,
     JSONRPCResponse,
-    RequestId,
-    Error,
     Message,
-    ClientMessage,
+    RequestId,
     errors::rpc_error_to_error,
 };
-use crate::transport::{ Transport, DirectIOTransport };
-use crate::client::lifecycle::{ LifecycleManager, LifecycleState };
-use crate::client::notification::NotificationRouter;
-use crate::client::request::RequestManager;
+use crate::{
+    client::services::{
+        lifecycle::{ LifecycleManager, LifecycleState },
+        notification::NotificationRouter,
+        request::RequestManager,
+    },
+    protocol::Method,
+};
+use serde::Serialize;
+use serde::de::DeserializeOwned;
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::sync::atomic::{ AtomicI64, Ordering };
+use std::time::Duration;
+use tokio::sync::{ Mutex, mpsc, oneshot };
+use tokio::task::JoinHandle;
+use tokio::time::timeout;
+use tracing::{ debug, error, warn };
 
 /// Default request timeout in seconds
 const DEFAULT_REQUEST_TIMEOUT: u64 = 30;
@@ -157,6 +160,12 @@ impl<T: DirectIOTransport + 'static> Client<T> {
             return Ok(());
         }
 
+        // Start the transport
+        {
+            let mut transport_guard = self.transport.lock().await;
+            transport_guard.start().await?;
+        }
+
         // Create channels for shutdown signaling
         let (shutdown_tx, mut shutdown_rx) = mpsc::channel::<()>(1);
 
@@ -192,17 +201,17 @@ impl<T: DirectIOTransport + 'static> Client<T> {
                             }
                             Err(e) => {
                                 error!("Error receiving message: {}", e);
-                                
+
                                 // Update lifecycle state
                                 let _ = lifecycle.set_error_state(format!("Transport error: {}", e)).await;
-                                
+
                                 // Check if we're shutting down
                                 let is_shutdown = *shutdown.lock().await;
                                 if is_shutdown {
                                     debug!("Client is shutting down, stopping message loop");
                                     break;
                                 }
-                                
+
                                 // Briefly pause before retrying
                                 tokio::time::sleep(Duration::from_millis(100)).await;
                             }
@@ -291,11 +300,11 @@ impl<T: DirectIOTransport + 'static> Client<T> {
     }
 
     /// Send a request and wait for a response
-    pub async fn send_request<P, R>(&self, method: &str, params: P) -> Result<R, Error>
+    pub async fn send_request<P, R>(&self, method: Method, params: P) -> Result<R, Error>
         where P: Serialize + Send + Sync, R: DeserializeOwned + Send + Sync
     {
         // Validate current lifecycle state
-        self.lifecycle.validate_request(method).await?;
+        self.lifecycle.validate_request(&method).await?;
 
         // Generate a new request ID
         let id = self.generate_id();
@@ -312,7 +321,7 @@ impl<T: DirectIOTransport + 'static> Client<T> {
         let request = JSONRPCRequest {
             jsonrpc: "2.0".to_string(),
             id: id.clone(),
-            method: method.to_string(),
+            method: method.clone(),
             params: params_value,
         };
 
@@ -368,11 +377,11 @@ impl<T: DirectIOTransport + 'static> Client<T> {
     }
 
     /// Send a notification
-    pub async fn send_notification<P>(&self, method: &str, params: P) -> Result<(), Error>
+    pub async fn send_notification<P>(&self, method: Method, params: P) -> Result<(), Error>
         where P: Serialize + Send + Sync
     {
         // Validate current lifecycle state
-        self.lifecycle.validate_notification(method).await?;
+        self.lifecycle.validate_notification(&method).await?;
 
         // Serialize the parameters
         let params_value = match serde_json::to_value(params) {
@@ -385,7 +394,7 @@ impl<T: DirectIOTransport + 'static> Client<T> {
         // Create the JSON-RPC notification
         let notification = JSONRPCNotification {
             jsonrpc: "2.0".to_string(),
-            method: method.to_string(),
+            method: method.clone(),
             params: params_value,
         };
 
@@ -401,7 +410,7 @@ impl<T: DirectIOTransport + 'static> Client<T> {
     /// Register a notification handler
     pub async fn register_notification_handler<F, Fut>(
         &self,
-        method: &str,
+        method: Method,
         handler: F
     )
         -> Result<(), Error>
@@ -410,7 +419,7 @@ impl<T: DirectIOTransport + 'static> Client<T> {
             Fut: std::future::Future<Output = Result<(), Error>> + Send + 'static
     {
         self.notification_router.register_handler(
-            method.to_string(),
+            method,
             Box::new(move |notification| {
                 let fut = handler(notification);
                 Box::pin(fut)
@@ -483,9 +492,9 @@ impl<T: DirectIOTransport + 'static> Client<T> {
                 match client_message {
                     ClientMessage::Request(_) => {
                         // Need request ID for requests
-                        let req_id = id.ok_or_else(||
+                        let req_id = id.ok_or_else(|| {
                             Error::Other("RequestId is required for request messages".to_string())
-                        )?;
+                        })?;
                         message.from_message(req_id)?
                     }
                     ClientMessage::Notification(_) => {
@@ -495,9 +504,9 @@ impl<T: DirectIOTransport + 'static> Client<T> {
                     }
                     ClientMessage::Result(_) => {
                         // Need request ID for results
-                        let req_id = id.ok_or_else(||
+                        let req_id = id.ok_or_else(|| {
                             Error::Other("RequestId is required for result messages".to_string())
-                        )?;
+                        })?;
                         message.from_message(req_id)?
                     }
                 }
@@ -507,9 +516,9 @@ impl<T: DirectIOTransport + 'static> Client<T> {
             }
             Message::Error(_) => {
                 // Need request ID for errors
-                let req_id = id.ok_or_else(||
+                let req_id = id.ok_or_else(|| {
                     Error::Other("RequestId is required for error messages".to_string())
-                )?;
+                })?;
                 message.from_message(req_id)?
             }
         };

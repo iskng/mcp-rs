@@ -7,9 +7,9 @@ use async_trait::async_trait;
 use std::sync::Arc;
 
 use crate::protocol::Error;
-use crate::protocol::{ CallToolRequest, CallToolResult, ListToolsRequest, ListToolsResult };
+use crate::protocol::{CallToolRequest, CallToolResult, ListToolsRequest, ListToolsResult};
 use crate::server::services::ServiceProvider;
-use crate::transport::middleware::ClientSession;
+use crate::server::transport::middleware::ClientSession;
 
 /// Tool handler trait for tool-related operations
 #[async_trait]
@@ -18,14 +18,14 @@ pub trait ToolHandler: Send + Sync {
     async fn handle_list_tools(
         &self,
         request: &ListToolsRequest,
-        session: &ClientSession
+        session: &ClientSession,
     ) -> Result<ListToolsResult, Error>;
 
     /// Handle call tool request
     async fn handle_call_tool(
         &self,
         request: &CallToolRequest,
-        session: &ClientSession
+        session: &ClientSession,
     ) -> Result<CallToolResult, Error>;
 }
 
@@ -47,7 +47,7 @@ impl ToolHandler for DefaultToolHandler {
     async fn handle_list_tools(
         &self,
         request: &ListToolsRequest,
-        session: &ClientSession
+        session: &ClientSession,
     ) -> Result<ListToolsResult, Error> {
         // Log the request
         if let Some(id) = &session.client_id {
@@ -73,7 +73,7 @@ impl ToolHandler for DefaultToolHandler {
     async fn handle_call_tool(
         &self,
         request: &CallToolRequest,
-        session: &ClientSession
+        session: &ClientSession,
     ) -> Result<CallToolResult, Error> {
         // Extract tool call parameters
         let params = request.params.clone();

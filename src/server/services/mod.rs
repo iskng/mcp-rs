@@ -17,7 +17,6 @@ pub struct ServiceProvider {
 
     /// Tool registry
     tool_registry: Arc<ToolRegistry>,
-
     // Additional services can be added here as needed
 }
 
