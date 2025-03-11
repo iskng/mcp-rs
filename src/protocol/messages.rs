@@ -1031,13 +1031,10 @@ impl Message {
                         )
                     }
                     ClientMessage::Result(result) => {
-                        let (method, params) = match result {
-                            ClientResult::CreateMessage(r) => {
-                                (Method::SamplingCreateMessage, serde_json::to_value(r)?)
-                            }
-                            ClientResult::ListRoots(r) =>
-                                (Method::RootsList, serde_json::to_value(r)?),
-                            ClientResult::Empty(r) => (Method::Ping, serde_json::to_value(r)?),
+                        let params = match result {
+                            ClientResult::CreateMessage(r) => { serde_json::to_value(r)? }
+                            ClientResult::ListRoots(r) => serde_json::to_value(r)?,
+                            ClientResult::Empty(r) => serde_json::to_value(r)?,
                         };
 
                         // Extract the ID from the value
@@ -1169,33 +1166,17 @@ impl Message {
                         )
                     }
                     ServerMessage::Result(result) => {
-                        let (method, params) = match result {
-                            ServerResult::Initialize(r) => {
-                                (Method::Initialize, serde_json::to_value(r)?)
-                            }
-                            ServerResult::ListResources(r) => {
-                                (Method::ResourcesList, serde_json::to_value(r)?)
-                            }
-                            ServerResult::ListResourceTemplates(r) => {
-                                (Method::ResourcesTemplatesList, serde_json::to_value(r)?)
-                            }
-                            ServerResult::ReadResource(r) => {
-                                (Method::ResourcesRead, serde_json::to_value(r)?)
-                            }
-                            ServerResult::ListPrompts(r) => {
-                                (Method::PromptsList, serde_json::to_value(r)?)
-                            }
-                            ServerResult::GetPrompt(r) => {
-                                (Method::PromptsGet, serde_json::to_value(r)?)
-                            }
-                            ServerResult::ListTools(r) =>
-                                (Method::ToolsList, serde_json::to_value(r)?),
-                            ServerResult::CallTool(r) =>
-                                (Method::ToolsCall, serde_json::to_value(r)?),
-                            ServerResult::Complete(r) => {
-                                (Method::CompletionComplete, serde_json::to_value(r)?)
-                            }
-                            ServerResult::Empty(r) => (Method::Ping, serde_json::to_value(r)?),
+                        let params = match result {
+                            ServerResult::Initialize(r) => { serde_json::to_value(r)? }
+                            ServerResult::ListResources(r) => { serde_json::to_value(r)? }
+                            ServerResult::ListResourceTemplates(r) => { serde_json::to_value(r)? }
+                            ServerResult::ReadResource(r) => { serde_json::to_value(r)? }
+                            ServerResult::ListPrompts(r) => { serde_json::to_value(r)? }
+                            ServerResult::GetPrompt(r) => { serde_json::to_value(r)? }
+                            ServerResult::ListTools(r) => serde_json::to_value(r)?,
+                            ServerResult::CallTool(r) => serde_json::to_value(r)?,
+                            ServerResult::Complete(r) => { serde_json::to_value(r)? }
+                            ServerResult::Empty(r) => serde_json::to_value(r)?,
                         };
 
                         // Extract the ID from the value

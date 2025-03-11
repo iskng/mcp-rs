@@ -3,7 +3,6 @@
 // This module provides a shared state mechanism for transport implementations
 // to track their connection status without lock contention.
 
-use std::sync::Arc;
 use tokio::sync::watch;
 use tracing::debug;
 

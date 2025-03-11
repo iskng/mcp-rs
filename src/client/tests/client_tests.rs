@@ -5,8 +5,8 @@
 
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::{ watch, RwLock };
 use tokio::time::timeout;
-use tokio::sync::watch;
 
 use crate::client::client::{ Client, ClientConfig };
 use crate::client::services::lifecycle::LifecycleState;
@@ -23,26 +23,36 @@ use crate::protocol::{
 
 /// Mock transport for testing
 struct MockTransport {
+    inner: RwLock<MockTransportInner>,
+    state: TransportStateChannel,
+}
+
+struct MockTransportInner {
     messages: Vec<JSONRPCMessage>,
     send_count: usize,
     receive_count: usize,
     connected: bool,
-    state: TransportStateChannel,
 }
 
 impl MockTransport {
     fn new() -> Self {
         Self {
-            messages: Vec::new(),
-            send_count: 0,
-            receive_count: 0,
-            connected: false,
+            inner: RwLock::new(MockTransportInner {
+                messages: Vec::new(),
+                send_count: 0,
+                receive_count: 0,
+                connected: false,
+            }),
             state: TransportStateChannel::new(),
         }
     }
 
+    /// Create a new transport with a prefilled response
     fn with_response(method: &str, id: RequestId) -> Self {
-        let mut transport = Self::new();
+        // Create a transport first
+        let transport = Self::new();
+
+        // Create the response
         let response = JSONRPCResponse {
             jsonrpc: "2.0".to_string(),
             id: id.clone(),
@@ -55,27 +65,53 @@ impl MockTransport {
             },
         };
 
-        transport.messages.push(JSONRPCMessage::Response(response));
-        transport
+        // Initialize the messages in the constructor directly
+        let mut initial_messages = Vec::new();
+        initial_messages.push(JSONRPCMessage::Response(response));
+
+        // Create a new transport with the initialized messages
+        Self {
+            inner: RwLock::new(MockTransportInner {
+                messages: initial_messages,
+                send_count: 0,
+                receive_count: 0,
+                connected: false,
+            }),
+            state: TransportStateChannel::new(),
+        }
     }
 
+    /// Create a new transport with a prefilled notification
     fn with_notification(method: &Method) -> Self {
-        let mut transport = Self::new();
+        // Create the notification
         let notification = JSONRPCNotification {
             jsonrpc: "2.0".to_string(),
             method: method.clone(),
             params: Some(serde_json::json!({ "event": "test" })),
         };
 
-        transport.messages.push(JSONRPCMessage::Notification(notification));
-        transport
+        // Initialize the messages in the constructor directly
+        let mut initial_messages = Vec::new();
+        initial_messages.push(JSONRPCMessage::Notification(notification));
+
+        // Create a new transport with the initialized messages
+        Self {
+            inner: RwLock::new(MockTransportInner {
+                messages: initial_messages,
+                send_count: 0,
+                receive_count: 0,
+                connected: false,
+            }),
+            state: TransportStateChannel::new(),
+        }
     }
 }
 
 #[async_trait::async_trait]
 impl crate::client::transport::Transport for MockTransport {
-    async fn start(&mut self) -> Result<(), Error> {
-        self.connected = true;
+    async fn start(&self) -> Result<(), Error> {
+        let mut inner = self.inner.write().await;
+        inner.connected = true;
 
         // Update the state
         self.state.update(|s| {
@@ -88,8 +124,9 @@ impl crate::client::transport::Transport for MockTransport {
         Ok(())
     }
 
-    async fn close(&mut self) -> Result<(), Error> {
-        self.connected = false;
+    async fn close(&self) -> Result<(), Error> {
+        let mut inner = self.inner.write().await;
+        inner.connected = false;
 
         // Update the state
         self.state.reset();
@@ -98,7 +135,8 @@ impl crate::client::transport::Transport for MockTransport {
     }
 
     fn is_connected(&self) -> bool {
-        self.connected
+        // Use the value from the state channel directly
+        self.state.current().has_connected && self.state.current().has_endpoint
     }
 
     fn subscribe_state(&self) -> watch::Receiver<TransportState> {
@@ -113,7 +151,9 @@ impl crate::client::transport::Transport for MockTransport {
         rx
     }
 
-    async fn send(&mut self, message: &JSONRPCMessage) -> Result<(), Error> {
+    async fn send(&self, message: &JSONRPCMessage) -> Result<(), Error> {
+        let mut inner = self.inner.write().await;
+
         if let JSONRPCMessage::Request(request) = message {
             // Auto-respond to initialize requests for testing lifecycle
             if request.method == Method::Initialize {
@@ -139,26 +179,32 @@ impl crate::client::transport::Transport for MockTransport {
                             .collect(),
                     },
                 };
-                self.messages.push(JSONRPCMessage::Response(response));
+                inner.messages.push(JSONRPCMessage::Response(response));
             }
         }
 
         // Store the sent message
-        self.messages.push(message.clone());
-        self.send_count += 1;
+        inner.messages.push(message.clone());
+        inner.send_count += 1;
         Ok(())
     }
 
-    async fn set_app_state(&mut self, _app_state: Arc<crate::server::server::AppState>) {
+    async fn set_app_state(&self, _app_state: Arc<crate::server::server::AppState>) {
         // Not needed for client tests
     }
 
-    async fn receive(&mut self) -> Result<(Option<String>, JSONRPCMessage), Error> {
-        if self.receive_count < self.messages.len() {
-            let message = self.messages[self.receive_count].clone();
-            self.receive_count += 1;
+    async fn receive(&self) -> Result<(Option<String>, JSONRPCMessage), Error> {
+        // Get inner state under a lock
+        let mut inner = self.inner.write().await;
+
+        if inner.receive_count < inner.messages.len() {
+            let message = inner.messages[inner.receive_count].clone();
+            inner.receive_count += 1;
             Ok((None, message))
         } else {
+            // Drop the lock before sleeping to avoid holding it across an await point
+            drop(inner);
+
             // Wait for a bit to simulate blocking
             tokio::time::sleep(Duration::from_millis(100)).await;
             Err(Error::Transport("No more messages".to_string()))
@@ -169,19 +215,19 @@ impl crate::client::transport::Transport for MockTransport {
 #[tokio::test]
 async fn test_client_initialization() {
     // Create a mock transport that will respond to initialize requests
-    let mut transport = MockTransport::new();
+    let transport = MockTransport::new();
 
     // Create client with default config
     let client = Client::new(Box::new(transport), ClientConfig::default());
 
     // Client should not be connected until started
-    assert!(!client.is_connected().await);
+    assert!(!client.is_connected());
 
     // Start the client
     client.start().await.expect("Failed to start client");
 
     // After starting, client should be connected
-    assert!(client.is_connected().await);
+    assert!(client.is_connected());
 
     // Send initialize request - this should transition to Initializing state
     let initialize_result: crate::protocol::Result = client
@@ -207,7 +253,7 @@ async fn test_client_initialization() {
     client.shutdown().await.expect("Failed to shutdown client");
 
     // After shutting down, client should be disconnected
-    assert!(!client.is_connected().await);
+    assert!(!client.is_connected());
 
     assert_eq!(client.lifecycle().current_state().await, LifecycleState::Initialization);
 }
@@ -368,7 +414,7 @@ async fn test_client_with_handlers() {
 
     // Start the client
     client.start().await.expect("Failed to start client");
-    assert!(client.is_connected().await);
+    assert!(client.is_connected());
 
     // Initialize the client using the handler
     // This will:
@@ -385,7 +431,7 @@ async fn test_client_with_handlers() {
     handler.shutdown().await.expect("Failed to shutdown client");
 
     // Verify the client is disconnected
-    assert!(!client.is_connected().await);
+    assert!(!client.is_connected());
 
     assert_eq!(client.lifecycle().current_state().await, LifecycleState::Shutdown);
     assert_eq!(

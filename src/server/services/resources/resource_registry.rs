@@ -3,19 +3,25 @@
 //! This module provides the Registry that manages resources and templates,
 //! and the Handler that processes MCP protocol messages related to resources.
 use crate::protocol::{
-    Cursor, ListResourceTemplatesResult, ListResourcesResult, Method, Resource,
-    ResourceContentType as ResourceContent, ResourceTemplate, UriTemplate,
+    Cursor,
+    ListResourceTemplatesResult,
+    ListResourcesResult,
+    Method,
+    Resource,
+    ResourceContentType as ResourceContent,
+    ResourceTemplate,
+    UriTemplate,
 };
-use crate::protocol::{Error, PaginatedRequestParams, ResourcesCapability};
-use crate::protocol::{JSONRPCMessage as Message, JSONRPCNotification as Notification};
+use crate::protocol::{ Error, PaginatedRequestParams, ResourcesCapability };
+use crate::protocol::{ JSONRPCMessage as Message, JSONRPCNotification as Notification };
 use crate::server::transport::Transport;
 
 use async_trait::async_trait;
 use serde_json::json;
-use std::collections::{HashMap, HashSet};
+use std::collections::{ HashMap, HashSet };
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, warn};
+use tracing::{ debug, warn };
 
 /// Provider for static resources
 #[async_trait]
@@ -69,8 +75,7 @@ impl ResourceRegistry {
 
     /// Register a static resource provider
     pub async fn register_resource<P>(&self, provider: P) -> Result<(), Error>
-    where
-        P: ResourceProvider + 'static,
+        where P: ResourceProvider + 'static
     {
         let metadata = provider.metadata();
         let uri = metadata.uri.clone();
@@ -86,10 +91,9 @@ impl ResourceRegistry {
     pub async fn register_template<P>(
         &self,
         template: ResourceTemplate,
-        provider: P,
+        provider: P
     ) -> Result<(), Error>
-    where
-        P: TemplateResourceProvider + 'static,
+        where P: TemplateResourceProvider + 'static
     {
         let uri_template = template.uri_template.clone();
 
@@ -103,7 +107,7 @@ impl ResourceRegistry {
     /// List all resources with optional filtering
     pub async fn list_resources(
         &self,
-        params: &PaginatedRequestParams,
+        params: &PaginatedRequestParams
     ) -> Result<ListResourcesResult, Error> {
         let resources = self.resources.read().await;
 
@@ -160,7 +164,7 @@ impl ResourceRegistry {
     /// List all resource templates with optional filtering
     pub async fn list_templates(
         &self,
-        params: &PaginatedRequestParams,
+        params: &PaginatedRequestParams
     ) -> Result<ListResourceTemplatesResult, Error> {
         let templates = self.templates.read().await;
 
@@ -237,10 +241,7 @@ impl ResourceRegistry {
     /// Subscribe to a resource
     pub async fn subscribe(&self, client_id: &str, uri: &str) -> Result<(), Error> {
         if !self.supports_subscribe() {
-            return Err(Error::Resource(format!(
-                "Resource subscription not supported: {}",
-                uri
-            )));
+            return Err(Error::Resource(format!("Resource subscription not supported: {}", uri)));
         }
 
         // Verify resource exists or matches a template
@@ -288,9 +289,7 @@ impl ResourceRegistry {
     /// Unsubscribe from a resource
     pub async fn unsubscribe(&self, client_id: &str, uri: &str) -> Result<(), Error> {
         if !self.supports_subscribe() {
-            return Err(Error::Resource(
-                "Resource subscription not supported".to_string(),
-            ));
+            return Err(Error::Resource("Resource subscription not supported".to_string()));
         }
 
         // Remove from client's subscriptions
@@ -407,7 +406,7 @@ impl ResourceRegistry {
     pub async fn notify_resource_update(
         &self,
         uri: &str,
-        transport: &mut Box<dyn Transport + Send + Sync>,
+        transport: &mut Box<dyn Transport + Send + Sync>
     ) -> Result<(), Error> {
         let subscribers = self.get_subscribers(uri).await;
 
@@ -417,10 +416,7 @@ impl ResourceRegistry {
 
             for client_id in subscribers {
                 if let Err(e) = forward_message_to_client(transport, &client_id, &message).await {
-                    warn!(
-                        "Failed to notify client {} about resource update: {}",
-                        client_id, e
-                    );
+                    warn!("Failed to notify client {} about resource update: {}", client_id, e);
                 }
             }
         }
@@ -431,19 +427,32 @@ impl ResourceRegistry {
     /// Notify clients that the resource list has changed
     pub async fn notify_list_changed(
         &self,
-        transport: &mut Box<dyn Transport + Send + Sync>,
+        transport: &mut Box<dyn Transport + Send + Sync>
     ) -> Result<(), Error> {
         if !self.supports_list_changed() {
             return Ok(());
         }
 
-        // For now, we'll just log this since Transport doesn't have a broadcast method
-        warn!("notify_list_changed called, but no broadcast method available on Transport");
+        // Get all unique client IDs from the subscriptions
+        let client_ids = {
+            let subscriptions = self.subscriptions.read().await;
+            subscriptions.keys().cloned().collect::<Vec<String>>()
+        };
 
-        // In a full implementation, we would iterate through all clients and send a notification
-        // But for now, this is left as a placeholder
-        // let notification = Self::create_list_changed_notification();
-        // let message = Message::Notification(notification);
+        if !client_ids.is_empty() {
+            let notification = Self::create_list_changed_notification();
+            let message = Message::Notification(notification);
+            debug!("Notified {} clients that resource list has changed", client_ids.len());
+            for client_id in client_ids {
+                if let Err(e) = forward_message_to_client(transport, &client_id, &message).await {
+                    warn!(
+                        "Failed to notify client {} about resource list change: {}",
+                        client_id,
+                        e
+                    );
+                }
+            }
+        }
 
         Ok(())
     }
@@ -453,7 +462,7 @@ impl ResourceRegistry {
 async fn forward_message_to_client(
     transport: &mut Box<dyn Transport + Send + Sync>,
     client_id: &str,
-    message: &Message,
+    message: &Message
 ) -> Result<(), Error> {
     // The message is already a JSONRPCMessage (alias)
     // Send the message using the transport

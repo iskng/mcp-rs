@@ -30,35 +30,32 @@ pub use services::{
     subscription::{ Subscription, SubscriptionManager },
 };
 
-use crate::client::transport::{ Transport, sse::SseTransport };
-use crate::protocol::Error;
-
 /// Connect to an MCP server using the provided transport
-pub async fn connect(
-    transport: Box<dyn Transport + 'static>,
-    client_name: Option<String>,
-    client_version: Option<String>
-) -> Result<ClientSession, Error> {
-    // Create a builder with the transport
-    let mut builder = ClientSessionBuilder::new(transport);
+// pub async fn connect(
+//     transport: Box<dyn Transport + 'static>,
+//     client_name: Option<String>,
+//     client_version: Option<String>
+// ) -> Result<ClientSession, Error> {
+//     // Create a builder with the transport
+//     let mut builder = ClientSessionBuilder::new(transport);
 
-    // Set client info if provided
-    if let Some(name) = client_name {
-        builder = builder.name(name);
-    }
+//     // Set client info if provided
+//     if let Some(name) = client_name {
+//         builder = builder.name(name);
+//     }
 
-    if let Some(version) = client_version {
-        builder = builder.version(version);
-    }
+//     if let Some(version) = client_version {
+//         builder = builder.version(version);
+//     }
 
-    // Build the session
-    let session = builder.build();
+//     // Build the session
+//     let session = builder.build();
 
-    // Initialize the session
-    session.initialize().await?;
+//     // Initialize the session
+//     session.initialize().await?;
 
-    Ok(session)
-}
+//     Ok(session)
+// }
 
 /// Connect to an MCP server using stdio transport
 // pub async fn connect_stdio(
@@ -75,18 +72,18 @@ pub async fn connect(
 // }
 
 /// Connect to an MCP server using SSE transport
-pub async fn connect_sse(
-    url: &str,
-    headers: Option<std::collections::HashMap<String, String>>,
-    client_name: Option<String>,
-    client_version: Option<String>
-) -> Result<ClientSession, Error> {
-    // Create SSE transport
-    let transport = SseTransport::new(url).await?;
+// pub async fn connect_sse(
+//     url: &str,
+//     headers: Option<std::collections::HashMap<String, String>>,
+//     client_name: Option<String>,
+//     client_version: Option<String>
+// ) -> Result<ClientSession, Error> {
+//     // Create SSE transport
+//     let transport = SseTransport::new(url).await?;
 
-    // Connect using the transport
-    connect(Box::new(transport), client_name, client_version).await
-}
+//     // Connect using the transport
+//     connect(Box::new(transport), client_name, client_version).await
+// }
 
 /// Connect to an MCP server using WebSocket transport
 // pub async fn connect_websocket(

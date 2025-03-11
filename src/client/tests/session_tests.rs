@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::watch;
+use tokio::sync::{ watch, RwLock };
 
 use crate::client::clientsession::ClientSession;
 use crate::client::services::notification::NotificationRouter;
@@ -23,26 +23,32 @@ use crate::protocol::{
 
 // Reuse the MockTransport from client_tests (we would need to refactor to share this)
 struct MockTransport {
+    inner: RwLock<MockTransportInner>,
+    state: TransportStateChannel,
+}
+
+struct MockTransportInner {
     messages: Vec<JSONRPCMessage>,
     send_count: usize,
     receive_count: usize,
     connected: bool,
-    state: TransportStateChannel,
 }
 
 impl MockTransport {
     fn new() -> Self {
         Self {
-            messages: Vec::new(),
-            send_count: 0,
-            receive_count: 0,
-            connected: false,
+            inner: RwLock::new(MockTransportInner {
+                messages: Vec::new(),
+                send_count: 0,
+                receive_count: 0,
+                connected: false,
+            }),
             state: TransportStateChannel::new(),
         }
     }
 
     fn with_initialize_response() -> Self {
-        let mut transport = Self::new();
+        // Create the response first
         let id = RequestId::Number(1);
 
         // Create a response for the initialize request
@@ -86,14 +92,28 @@ impl MockTransport {
             },
         };
 
-        transport.messages.push(JSONRPCMessage::Response(response));
-        transport
+        // Initialize the messages directly
+        let mut initial_messages = Vec::new();
+        initial_messages.push(JSONRPCMessage::Response(response));
+
+        // Create a new transport with the initialized messages
+        Self {
+            inner: RwLock::new(MockTransportInner {
+                messages: initial_messages,
+                send_count: 0,
+                receive_count: 0,
+                connected: false,
+            }),
+            state: TransportStateChannel::new(),
+        }
     }
 }
 
+#[async_trait::async_trait]
 impl crate::client::transport::Transport for MockTransport {
-    async fn start(&mut self) -> Result<(), Error> {
-        self.connected = true;
+    async fn start(&self) -> Result<(), Error> {
+        let mut inner = self.inner.write().await;
+        inner.connected = true;
 
         // Update the state
         self.state.update(|s| {
@@ -106,8 +126,9 @@ impl crate::client::transport::Transport for MockTransport {
         Ok(())
     }
 
-    async fn close(&mut self) -> Result<(), Error> {
-        self.connected = false;
+    async fn close(&self) -> Result<(), Error> {
+        let mut inner = self.inner.write().await;
+        inner.connected = false;
 
         // Update the state
         self.state.reset();
@@ -116,7 +137,8 @@ impl crate::client::transport::Transport for MockTransport {
     }
 
     fn is_connected(&self) -> bool {
-        self.connected
+        // Use the value from the state channel directly
+        self.state.current().has_connected && self.state.current().has_endpoint
     }
 
     fn subscribe_state(&self) -> watch::Receiver<TransportState> {
@@ -131,22 +153,29 @@ impl crate::client::transport::Transport for MockTransport {
         rx
     }
 
-    async fn send(&mut self, message: &JSONRPCMessage) -> Result<(), Error> {
-        self.messages.push(message.clone());
-        self.send_count += 1;
+    async fn send(&self, message: &JSONRPCMessage) -> Result<(), Error> {
+        let mut inner = self.inner.write().await;
+        inner.messages.push(message.clone());
+        inner.send_count += 1;
         Ok(())
     }
 
-    async fn set_app_state(&mut self, _app_state: Arc<crate::server::server::AppState>) {
+    async fn set_app_state(&self, _app_state: Arc<crate::server::server::AppState>) {
         // Not needed for client tests
     }
 
-    async fn receive(&mut self) -> Result<(Option<String>, JSONRPCMessage), Error> {
-        if self.receive_count < self.messages.len() {
-            let message = self.messages[self.receive_count].clone();
-            self.receive_count += 1;
+    async fn receive(&self) -> Result<(Option<String>, JSONRPCMessage), Error> {
+        // Get inner state under a lock
+        let mut inner = self.inner.write().await;
+
+        if inner.receive_count < inner.messages.len() {
+            let message = inner.messages[inner.receive_count].clone();
+            inner.receive_count += 1;
             Ok((None, message))
         } else {
+            // Drop the lock before sleeping to avoid holding it across an await point
+            drop(inner);
+
             // Wait for a bit to simulate blocking
             tokio::time::sleep(Duration::from_millis(100)).await;
             Err(Error::Transport("No more messages".to_string()))

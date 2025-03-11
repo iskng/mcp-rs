@@ -6,7 +6,6 @@
 use serde_json;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::SystemTime;
 use tokio::sync::RwLock;
 use tracing::{ debug, warn, error, info };
 
@@ -25,13 +24,11 @@ use crate::protocol::{
     CompleteParams,
     CompleteResult,
     Error,
-    GetPromptParams,
     GetPromptResult,
     Implementation,
     InitializeParams,
     InitializeResult,
     JSONRPCNotification,
-    JSONRPCRequest,
     ListPromptsResult,
     ListResourceTemplatesResult,
     ListResourcesResult,
@@ -44,7 +41,6 @@ use crate::protocol::{
     RequestId,
     ResourceListChangedNotification,
     ResourceUpdatedNotification,
-    JSONRPCMessage,
 };
 
 use super::transport::Transport;
@@ -106,12 +102,6 @@ impl ClientSession {
     pub fn builder(transport: Box<dyn Transport + 'static>) -> ClientSessionBuilder {
         // Create a builder with the transport
         ClientSessionBuilder::new(transport)
-    }
-
-    /// Generate a unique request ID based on current timestamp
-    fn generate_id(&self) -> RequestId {
-        let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default();
-        RequestId::Number((now.as_secs() as i64) * 1000 + (now.subsec_millis() as i64))
     }
 
     /// Initialize the client session

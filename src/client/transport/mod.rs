@@ -9,11 +9,10 @@ pub mod websocket;
 use crate::protocol::JSONRPCMessage;
 use crate::protocol::errors::Error;
 use crate::server::server::AppState;
-use crate::client::transport::state::{ TransportState };
+use crate::client::transport::state::TransportState;
 use async_trait::async_trait;
 use std::sync::Arc;
 use tokio::sync::{ broadcast, watch };
-use tracing::debug;
 
 /// Simple connection status for transports
 #[derive(Debug, Clone, PartialEq, Eq)]
