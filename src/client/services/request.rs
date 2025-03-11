@@ -251,6 +251,10 @@ impl RequestManager {
 
 impl Default for RequestManager {
     fn default() -> Self {
-        Self::new(Duration::from_secs(30))
+        Self {
+            request_id_counter: AtomicI32::new(1),
+            pending_requests: Mutex::new(HashMap::new()),
+            default_timeout: Duration::from_secs(3),
+        }
     }
 }

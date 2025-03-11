@@ -26,10 +26,10 @@ pub enum ConnectionStatus {
 #[async_trait]
 pub trait Transport: Send + Sync {
     /// Start the transport
-    async fn start(&mut self) -> Result<(), Error>;
+    async fn start(&self) -> Result<(), Error>;
 
     /// Close the transport
-    async fn close(&mut self) -> Result<(), Error>;
+    async fn close(&self) -> Result<(), Error>;
 
     /// Get a receiver for status updates
     fn subscribe_status(&self) -> broadcast::Receiver<ConnectionStatus>;
@@ -42,12 +42,12 @@ pub trait Transport: Send + Sync {
     fn subscribe_state(&self) -> watch::Receiver<TransportState>;
 
     /// Send a message to the server
-    async fn send(&mut self, message: &JSONRPCMessage) -> Result<(), Error>;
+    async fn send(&self, message: &JSONRPCMessage) -> Result<(), Error>;
 
     /// Receive a message from the server
     /// Returns a tuple of (session_id, message)
-    async fn receive(&mut self) -> Result<(Option<String>, JSONRPCMessage), Error>;
+    async fn receive(&self) -> Result<(Option<String>, JSONRPCMessage), Error>;
 
     /// Set application state
-    async fn set_app_state(&mut self, app_state: Arc<AppState>);
+    async fn set_app_state(&self, app_state: Arc<AppState>);
 }

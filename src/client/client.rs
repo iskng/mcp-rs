@@ -23,9 +23,9 @@ use crate::{
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use std::sync::Arc;
-use std::sync::atomic::{ AtomicI64, Ordering, AtomicBool };
+use std::sync::atomic::{ Ordering, AtomicBool };
 use std::time::Duration;
-use tokio::sync::{ Mutex, mpsc, oneshot, broadcast, RwLock };
+use tokio::sync::{ Mutex, mpsc, broadcast };
 use tokio::task::JoinHandle;
 use tracing::{ debug, error, info, warn };
 use std::pin::Pin;
@@ -116,7 +116,7 @@ impl ClientBuilder {
 /// Main client for MCP protocol communication
 pub struct Client {
     /// The transport used for communication
-    transport: Arc<Mutex<Box<dyn Transport + 'static>>>,
+    transport: Arc<Box<dyn Transport + 'static>>,
     /// Service provider for accessing shared services
     service_provider: Arc<ServiceProvider>,
     /// Handle to the message processing task
@@ -145,7 +145,8 @@ impl Client {
         let service_provider = Arc::new(ServiceProvider::new());
 
         Self {
-            transport: Arc::new(Mutex::new(transport)),
+            // Wrap the transport directly in an Arc without a Mutex
+            transport: Arc::new(transport),
             service_provider,
             message_task: Mutex::new(None),
             message_task_shutdown: Arc::new(Mutex::new(None)),
@@ -166,18 +167,11 @@ impl Client {
         }
 
         debug!("Starting transport");
-        {
-            // Start the transport
-            let mut transport = self.transport.lock().await;
-            transport.start().await?;
-        }
+        // Start the transport - no longer need to lock it
+        self.transport.start().await?;
 
         // Get a status subscriber from transport and forward to client subscribers
-        let mut status_rx;
-        {
-            let transport = self.transport.lock().await;
-            status_rx = transport.subscribe_status();
-        }
+        let mut status_rx = self.transport.subscribe_status();
 
         // Spawn a task to forward status updates
         let status_tx = self.status_tx.clone();
@@ -296,43 +290,22 @@ impl Client {
                         break;
                     }
                     result = async {
-                        // Minimize the time holding the transport lock by only using it for receive
-                        let result = {
-                            // Add tracing around the lock acquisition
-                            let mut transport_guard = match tokio::time::timeout(
-                                tokio::time::Duration::from_secs(1),
-                                transport.lock()
-                            ).await {
-                                Ok(guard) => {
-                                    guard
-                                },
-                                Err(_) => {
-                                    // If we fail to acquire the lock, yield to other tasks and try again
-                                    debug!("Message loop failed to acquire transport lock, yielding");
-                                    // Sleep briefly to allow other tasks to run
-                                    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-                                    return Err(Error::Transport("Timeout acquiring transport lock".to_string()));
-                                }
-                            };
-                            
-                            // Attempt to receive with a timeout
-                            let recv_result = tokio::time::timeout(
-                                tokio::time::Duration::from_millis(500),
-                                transport_guard.receive()
-                            ).await;
-                            
-                            // Process the receive result
-                            match recv_result {
-                                Ok(result) => {
-                                    debug!("Message loop received message successfully");
-                                    result
-                                },
-                                Err(_) => {
-                                    Err(Error::Transport("Receive operation timed out".to_string()))
-                                }
+                        // Directly receive messages without locking the transport
+                     
+                        let recv_result = tokio::time::timeout(
+                            tokio::time::Duration::from_millis(500),
+                            transport.receive()
+                        ).await;
+                        
+                        match recv_result {
+                            Ok(result) => {
+                                debug!("Message loop received message successfully");
+                                result
+                            },
+                            Err(_) => {
+                                Err(Error::Transport("Receive operation timed out".to_string()))
                             }
-                        };
-                        result
+                        }
                     } => {
                         match result {
                             Ok((_, message)) => {
@@ -498,11 +471,13 @@ impl Client {
             );
         }
         debug!("Client is in a valid state to send request");
+
         // Check if the client is connected
         if !self.is_connected() {
             return Err(Error::Transport("Not connected to server".to_string()));
         }
         debug!("Client is connected to server");
+
         // Serialize the parameters
         let params_value = match serde_json::to_value(params) {
             Ok(value) => Some(value),
@@ -514,38 +489,14 @@ impl Client {
         // Use the request manager to handle the request
         debug!("Using request manager to send request: {}", method);
 
-        // Create the send function here to avoid capturing self (which would cause nested locks)
+        // Create the send function here to avoid capturing self
         let transport_clone = self.transport.clone();
         let send_fn = move |message: JSONRPCMessage| {
             let transport = transport_clone.clone();
             Box::pin(async move {
                 debug!("Request manager sending message");
-                // Add timing information for lock acquisition
-                info!("Attempting to acquire transport lock at {:?}", std::time::Instant::now());
-                // Acquire transport lock only when needed
-                let lock_result = tokio::time::timeout(
-                    tokio::time::Duration::from_secs(2),
-                    transport.lock()
-                ).await;
-
-                match lock_result {
-                    Ok(mut transport_guard) => {
-                        info!(
-                            "Successfully acquired transport lock at {:?}",
-                            std::time::Instant::now()
-                        );
-                        debug!("Sending message through transport after lock");
-                        let result = transport_guard.send(&message).await;
-                        debug!("sent message through transport");
-                        result
-                    }
-                    Err(_) => {
-                        error!(
-                            "Failed to acquire transport lock after 2 seconds - possible deadlock"
-                        );
-                        Err(Error::Transport("Transport lock acquisition timeout".to_string()))
-                    }
-                }
+                // No need for lock acquisition, directly send the message
+                transport.send(&message).await
             }) as Pin<Box<dyn Future<Output = Result<(), Error>> + Send>>
         };
 
@@ -677,13 +628,9 @@ impl Client {
             }
         }
 
-        // Close the transport
-        {
-            let mut transport = self.transport.lock().await;
-            // Transport implementations handle their own cleanup
-            if let Err(e) = transport.close().await {
-                warn!("Error closing transport during shutdown: {}", e);
-            }
+        // Close the transport - no need to lock anymore
+        if let Err(e) = self.transport.close().await {
+            warn!("Error closing transport during shutdown: {}", e);
         }
 
         // Update lifecycle state to shutdown
@@ -713,13 +660,9 @@ impl Client {
             return Err(Error::Transport("Not connected to server".to_string()));
         }
 
-        // Acquire transport lock as late as possible and for as short a time as possible
-        debug!("Acquiring transport lock to send message");
-        let result = {
-            let mut transport = self.transport.lock().await;
-            debug!("Transport lock acquired, sending message");
-            transport.send(&message).await
-        };
+        // Directly send the message without locking
+        debug!("Sending message through transport");
+        let result = self.transport.send(&message).await;
 
         match result {
             Ok(_) => {
@@ -772,11 +715,8 @@ impl Client {
             }
         };
 
-        // Get a lock on the transport
-        let mut transport = self.transport.lock().await;
-
-        // Send the message
-        transport.send(&json_rpc_message).await
+        // Send the message directly
+        self.transport.send(&json_rpc_message).await
     }
 
     /// Subscribe to connection status updates

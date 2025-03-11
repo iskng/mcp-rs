@@ -8,32 +8,26 @@ use async_trait::async_trait;
 use eventsource_client::Client;
 use futures_util::stream::StreamExt;
 use log::{ error, info, trace, warn };
-use reqwest::{ Client as HttpClient, ClientBuilder, header };
-use tokio::sync::RwLock;
+use reqwest::{ Client as HttpClient, header };
 use tracing::debug;
-use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::{ AtomicBool, Ordering };
 use std::time::Duration;
 use tokio::sync::{ Mutex, mpsc, oneshot };
 use eventsource_client as es;
-use futures::stream::{ Stream, TryStreamExt };
-use serde::{ Deserialize, Serialize };
+use futures::stream::Stream;
+use futures::TryStreamExt;
 use crate::client::transport::{ Transport, ConnectionStatus };
 use tokio::sync::broadcast;
 
 use crate::protocol::Error;
-use crate::protocol::messages::Message; // Import the high-level Message type
-use crate::protocol::{ JSONRPCMessage, RequestId };
+use crate::protocol::JSONRPCMessage;
 use crate::server::server::AppState;
-use crate::client::transport::state::{ TransportState, TransportStateChannel };
+use crate::client::transport::state::TransportStateChannel;
 
 /// Default timeout for HTTP requests
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 /// Default retry delay for reconnecting
 const DEFAULT_RETRY_DELAY: Duration = Duration::from_secs(2);
-/// Maximum number of reconnect attempts
-const MAX_RECONNECT_ATTEMPTS: usize = 5;
 /// Buffer size for message channel
 const CHANNEL_BUFFER_SIZE: usize = 100;
 
@@ -108,16 +102,12 @@ impl Default for SseOptions {
 
 /// Client-side implementation of the SSE transport
 pub struct SseTransport {
-    /// Base URL for the SSE server
-    base_url: String,
     /// URL for the SSE endpoint
     sse_url: String,
-    /// Cached copy of messages URL to avoid lock contention during sends
-    cached_messages_url: Arc<RwLock<String>>,
     /// HTTP client for sending messages (not for SSE)
     http_client: HttpClient,
     /// Channel for incoming messages
-    rx: mpsc::Receiver<JSONRPCMessage>,
+    rx: Arc<Mutex<mpsc::Receiver<JSONRPCMessage>>>,
     /// Sender for the message channel
     tx: Arc<mpsc::Sender<JSONRPCMessage>>,
     /// Options for the transport
@@ -127,9 +117,9 @@ pub struct SseTransport {
     /// Status broadcaster
     status_tx: Arc<broadcast::Sender<ConnectionStatus>>,
     /// Task handle for the SSE connection
-    _task_handle: Option<tokio::task::JoinHandle<()>>,
+    _task_handle: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
     /// Shutdown signal sender
-    shutdown_tx: Option<oneshot::Sender<()>>,
+    shutdown_tx: Arc<Mutex<Option<oneshot::Sender<()>>>>,
 }
 
 impl SseTransport {
@@ -141,7 +131,8 @@ impl SseTransport {
     /// Create a new SSE transport with custom options
     pub async fn with_options(base_url: &str, options: SseOptions) -> Result<Self, Error> {
         let sse_url = format!("{}/sse", base_url.trim_end_matches('/'));
-        let messages_url = format!("{}/message", base_url.trim_end_matches('/'));
+        // No longer needed since we've removed the cached_messages_url field
+        let _messages_url = format!("{}/message", base_url.trim_end_matches('/'));
 
         // Create the HTTP client with custom headers
         let mut headers = header::HeaderMap::new();
@@ -181,46 +172,44 @@ impl SseTransport {
         let state = TransportStateChannel::new();
 
         Ok(Self {
-            base_url: base_url.to_string(),
             sse_url,
-            cached_messages_url: Arc::new(RwLock::new(messages_url)),
             http_client,
-            rx,
+            rx: Arc::new(Mutex::new(rx)),
             tx: Arc::new(tx),
             options,
             state,
             status_tx: Arc::new(status_tx),
-            _task_handle: None,
-            shutdown_tx: None,
+            _task_handle: Arc::new(Mutex::new(None)),
+            shutdown_tx: Arc::new(Mutex::new(None)),
         })
     }
 
     /// Start a background task that connects to the SSE endpoint
-    async fn start_sse_connection(&mut self) -> Result<(), Error> {
+    async fn start_sse_connection(&self) -> Result<(), Error> {
         // Create channels for event processing
         let (event_tx, event_rx) = mpsc::channel(CHANNEL_BUFFER_SIZE);
         let (processor_shutdown_tx, processor_shutdown_rx) = oneshot::channel();
         let (stream_shutdown_tx, stream_shutdown_rx) = oneshot::channel();
 
         // Store the shutdown sender
-        self.shutdown_tx = Some(stream_shutdown_tx);
+        let mut shutdown_guard = self.shutdown_tx.lock().await;
+        *shutdown_guard = Some(stream_shutdown_tx);
+        drop(shutdown_guard); // Release the lock explicitly
 
         // Create clones for the tasks
         let sse_url = self.sse_url.clone();
         let tx = self.tx.clone();
         let state = self.state.clone();
-        let cached_messages_url = self.cached_messages_url.clone();
         let status_tx = self.status_tx.clone();
 
         // Start the event processing task
-        let process_handle = tokio::spawn(async move {
+        let _process_handle = tokio::spawn(async move {
             process_sse_events(
                 event_rx,
                 tx,
                 state,
-                cached_messages_url,
-                processor_shutdown_rx,
                 sse_url,
+                processor_shutdown_rx,
                 status_tx
             ).await;
         });
@@ -298,42 +287,11 @@ impl SseTransport {
         });
 
         // Store the combined task handle
-        self._task_handle = Some(stream_handle);
+        let mut task_handle_guard = self._task_handle.lock().await;
+        *task_handle_guard = Some(stream_handle);
+        drop(task_handle_guard); // Release the lock explicitly
 
         Ok(())
-    }
-
-    /// Get the current session ID
-    pub async fn session_id(&self) -> String {
-        self.state.current().session_id.unwrap_or_default()
-    }
-
-    /// Fast connection check without locking
-    pub fn fast_is_connected(&self) -> bool {
-        self.state.is_connected()
-    }
-
-    /// Update the connected state and notify listeners if changed
-    fn update_connected(&self, is_connected: bool) {
-        let current_state = self.state.current();
-
-        // Check if state has changed
-        if (current_state.has_endpoint && current_state.has_connected) != is_connected {
-            // Update the state
-            self.state.update(|state| {
-                state.has_endpoint = is_connected;
-                state.has_connected = is_connected;
-            });
-
-            // Notify status listeners
-            let status = if is_connected {
-                ConnectionStatus::Connected
-            } else {
-                ConnectionStatus::Disconnected
-            };
-
-            let _ = self.status_tx.send(status);
-        }
     }
 }
 
@@ -448,9 +406,8 @@ async fn process_sse_events(
     mut event_rx: mpsc::Receiver<SseEventType>,
     tx: Arc<mpsc::Sender<JSONRPCMessage>>,
     state: TransportStateChannel,
-    cached_messages_url: Arc<RwLock<String>>,
-    mut shutdown_rx: oneshot::Receiver<()>,
     sse_url: String,
+    mut _shutdown_rx: oneshot::Receiver<()>,
     status_tx: Arc<broadcast::Sender<ConnectionStatus>>
 ) {
     // Start with disconnected state
@@ -485,14 +442,7 @@ async fn process_sse_events(
                     debug!("Extracted session ID: {}", session_id_value);
                 }
 
-                // Update the cached URL to avoid lock contention
-                {
-                    let mut cached_url_guard = cached_messages_url.write().await;
-                    *cached_url_guard = full_endpoint_url.clone();
-                    debug!("Updated cached messages URL");
-                }
-
-                // Update the state
+                // Update the state with the endpoint URL
                 state.update(|s| {
                     s.has_endpoint = true;
                     s.endpoint_url = Some(full_endpoint_url);
@@ -567,7 +517,7 @@ async fn process_sse_events(
 #[async_trait]
 impl Transport for SseTransport {
     /// Start the transport
-    async fn start(&mut self) -> Result<(), Error> {
+    async fn start(&self) -> Result<(), Error> {
         debug!("Starting SSE transport");
 
         // Reset state to disconnected
@@ -651,27 +601,30 @@ impl Transport for SseTransport {
         Err(Error::Transport("Timeout waiting for SSE connection".to_string()))
     }
 
-    async fn send(&mut self, message: &JSONRPCMessage) -> Result<(), Error> {
+    /// Send a message to the server
+    async fn send(&self, message: &JSONRPCMessage) -> Result<(), Error> {
         // Quick check if connected
         if !self.state.is_connected() {
             error!("Cannot send message - transport not connected");
             return Err(Error::Transport("Not connected to server".to_string()));
         }
 
-        // Get the cached URL - to avoid lock contention
-        let cached_url = {
-            let cached_url_guard = self.cached_messages_url.read().await;
-            cached_url_guard.clone()
+        // Get the endpoint URL directly from the TransportState
+        let current_state = self.state.current();
+        let endpoint_url = match &current_state.endpoint_url {
+            Some(url) if !url.is_empty() => url.clone(),
+            _ => {
+                error!("Cannot send message - no endpoint URL available in transport state");
+                return Err(Error::Transport("No endpoint URL available".to_string()));
+            }
         };
 
-        if cached_url.is_empty() {
-            error!("Cannot send message - no endpoint URL available");
-            return Err(Error::Transport("No endpoint URL available".to_string()));
-        }
+        // Log the request
+        debug!("Sending message to endpoint: {}", endpoint_url);
 
         // Send the message as JSON
         let response = self.http_client
-            .post(&cached_url)
+            .post(&endpoint_url)
             .json(message)
             .send().await
             .map_err(|e| Error::Transport(format!("Failed to send message: {}", e)))?;
@@ -684,11 +637,14 @@ impl Transport for SseTransport {
             return Err(Error::Transport(format!("Server error: {} - {}", status, error_text)));
         }
 
+        debug!("Message sent successfully");
         Ok(())
     }
 
-    async fn receive(&mut self) -> Result<(Option<String>, JSONRPCMessage), Error> {
-        match self.rx.recv().await {
+    async fn receive(&self) -> Result<(Option<String>, JSONRPCMessage), Error> {
+        // We need to lock the receiver channel to receive from it
+        let mut rx_guard = self.rx.lock().await;
+        match rx_guard.recv().await {
             Some(message) => {
                 // Get session ID from state
                 let session_id = self.state.current().session_id.clone();
@@ -708,14 +664,16 @@ impl Transport for SseTransport {
         self.state.receiver()
     }
 
-    async fn close(&mut self) -> Result<(), Error> {
+    async fn close(&self) -> Result<(), Error> {
         debug!("Closing SSE transport");
 
         // Send shutdown signal
-        if let Some(tx) = self.shutdown_tx.take() {
+        let mut shutdown_guard = self.shutdown_tx.lock().await;
+        if let Some(tx) = shutdown_guard.take() {
             debug!("Sending shutdown signal to SSE task");
             let _ = tx.send(());
         }
+        drop(shutdown_guard);
 
         // Set to disconnected
         self.state.reset();
@@ -729,7 +687,7 @@ impl Transport for SseTransport {
     }
 
     /// Set the app state
-    async fn set_app_state(&mut self, _app_state: Arc<AppState>) {
+    async fn set_app_state(&self, _app_state: Arc<AppState>) {
         // SSE transport doesn't use app state
     }
 
