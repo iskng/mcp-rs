@@ -160,10 +160,6 @@ impl crate::client::transport::Transport for MockTransport {
         Ok(())
     }
 
-    async fn set_app_state(&self, _app_state: Arc<crate::server::server::AppState>) {
-        // Not needed for client tests
-    }
-
     async fn receive(&self) -> Result<(Option<String>, JSONRPCMessage), Error> {
         // Get inner state under a lock
         let mut inner = self.inner.write().await;

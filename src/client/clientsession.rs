@@ -219,7 +219,7 @@ impl ClientSession {
     }
 
     /// Check if the server has a specific capability
-    pub async fn has_capability(&self, capability: &str) -> bool {
+    pub async fn has_capability(&self, _capability: &str) -> bool {
         debug!("has_capability called - not implemented");
         false
     }

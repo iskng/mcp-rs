@@ -77,9 +77,6 @@ impl HandshakeHandler for DefaultHandshakeHandler {
             return Err(Error::Lifecycle("Client is already initialized".to_string()));
         }
 
-        // Transition to Initializing state
-        lifecycle.transition_to(LifecycleState::Initialization).await?;
-
         // Create initialize parameters
         let params = InitializeParams {
             protocol_version: PROTOCOL_VERSION.to_string(),
@@ -120,9 +117,6 @@ impl HandshakeHandler for DefaultHandshakeHandler {
 
         // Store the result for future reference
         lifecycle.set_server_info(result.clone()).await?;
-
-        // Update state to ServerInitialized
-        lifecycle.transition_to(LifecycleState::Initialization).await?;
 
         Ok(result)
     }

@@ -21,7 +21,6 @@ use tokio::sync::broadcast;
 
 use crate::protocol::Error;
 use crate::protocol::JSONRPCMessage;
-use crate::server::server::AppState;
 use crate::client::transport::state::TransportStateChannel;
 
 /// Default timeout for HTTP requests
@@ -684,11 +683,6 @@ impl Transport for SseTransport {
 
         debug!("SSE transport closed");
         Ok(())
-    }
-
-    /// Set the app state
-    async fn set_app_state(&self, _app_state: Arc<AppState>) {
-        // SSE transport doesn't use app state
     }
 
     fn subscribe_status(&self) -> broadcast::Receiver<ConnectionStatus> {

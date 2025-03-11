@@ -5,13 +5,12 @@
 pub mod sse;
 pub mod state;
 pub mod websocket;
+pub mod stdio;
 
 use crate::protocol::JSONRPCMessage;
 use crate::protocol::errors::Error;
-use crate::server::server::AppState;
 use crate::client::transport::state::TransportState;
 use async_trait::async_trait;
-use std::sync::Arc;
 use tokio::sync::{ broadcast, watch };
 
 /// Simple connection status for transports
@@ -46,7 +45,4 @@ pub trait Transport: Send + Sync {
     /// Receive a message from the server
     /// Returns a tuple of (session_id, message)
     async fn receive(&self) -> Result<(Option<String>, JSONRPCMessage), Error>;
-
-    /// Set application state
-    async fn set_app_state(&self, app_state: Arc<AppState>);
 }

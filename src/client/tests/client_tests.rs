@@ -11,6 +11,7 @@ use tokio::time::timeout;
 use crate::client::client::{ Client, ClientConfig };
 use crate::client::services::lifecycle::LifecycleState;
 use crate::client::transport::state::{ TransportState, TransportStateChannel };
+use crate::client::handlers::handshake::HandshakeHandler;
 use crate::protocol::{
     Error,
     JSONRPCMessage,
@@ -181,16 +182,15 @@ impl crate::client::transport::Transport for MockTransport {
                 };
                 inner.messages.push(JSONRPCMessage::Response(response));
             }
-        }
 
-        // Store the sent message
-        inner.messages.push(message.clone());
+            // Store the sent request for potential response
+            inner.messages.push(message.clone());
+        }
+        // For other message types (notifications, etc.), we don't add them back to the queue
+        // to avoid recursive loops where the client receives its own sent notifications
+
         inner.send_count += 1;
         Ok(())
-    }
-
-    async fn set_app_state(&self, _app_state: Arc<crate::server::server::AppState>) {
-        // Not needed for client tests
     }
 
     async fn receive(&self) -> Result<(Option<String>, JSONRPCMessage), Error> {
@@ -255,7 +255,7 @@ async fn test_client_initialization() {
     // After shutting down, client should be disconnected
     assert!(!client.is_connected());
 
-    assert_eq!(client.lifecycle().current_state().await, LifecycleState::Initialization);
+    assert_eq!(client.lifecycle().current_state().await, LifecycleState::Shutdown);
 }
 
 #[tokio::test]
@@ -288,7 +288,7 @@ async fn test_client_send_request() {
     // Shutdown the client
     client.shutdown().await.expect("Failed to shutdown client");
 
-    assert_eq!(client.lifecycle().current_state().await, LifecycleState::Operation);
+    assert_eq!(client.lifecycle().current_state().await, LifecycleState::Shutdown);
 }
 
 #[tokio::test]
@@ -299,22 +299,29 @@ async fn test_client_send_notification() {
     // Create a client with the transport
     let client = Client::new(Box::new(transport), ClientConfig::default());
 
-    // Send a notification
-    let notification = JSONRPCNotification {
-        jsonrpc: "2.0".to_string(),
-        method: Method::NotificationsResourcesUpdated,
-        params: Some(serde_json::json!({ "event": "test" })),
-    };
+    // Start the client
+    client.start().await.expect("Failed to start client");
 
+    // Manually initialize the client lifecycle state to Operation
+    // This is a test-only shortcut to avoid the full initialization process
+    client
+        .lifecycle()
+        .transition_to(LifecycleState::Operation).await
+        .expect("Failed to transition state");
+
+    // Now send the notification without going through the initialization flow
     let result = client.send_notification(
         Method::NotificationsResourcesUpdated,
         serde_json::json!({ "event": "test" })
     ).await;
-    assert!(result.is_ok());
+
+    // Check result
+    assert!(result.is_ok(), "Expected ok result, got {:?}", result);
 
     // Shutdown the client
     client.shutdown().await.expect("Failed to shutdown client");
 
+    // Validate final state
     assert_eq!(client.lifecycle().current_state().await, LifecycleState::Shutdown);
 }
 

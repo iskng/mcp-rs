@@ -588,6 +588,7 @@ impl Client {
         }
 
         // Use the transport state directly without locking the transport
+        debug!("Transport state: {:?}", self.transport_state.borrow());
         self.transport_state.borrow().is_connected()
     }
 
@@ -595,15 +596,6 @@ impl Client {
     pub async fn shutdown(&self) -> Result<(), Error> {
         // Mark client as shutting down
         self.shutdown.store(true, Ordering::Relaxed);
-
-        // Notify the lifecycle manager that we're shutting down
-        if
-            let Err(e) = self.service_provider
-                .lifecycle_manager()
-                .transition_to(LifecycleState::Shutdown).await
-        {
-            warn!("Failed to update lifecycle state during shutdown: {}", e);
-        }
 
         // Cancel all pending requests
         self.service_provider.request_manager().cancel_all_requests("Client shutting down").await;
@@ -725,17 +717,17 @@ impl Client {
     }
 }
 
-impl Drop for Client {
-    fn drop(&mut self) {
-        // When client is dropped, spawn a blocking task to ensure shutdown
-        let client_clone = self.clone();
-        tokio::spawn(async move {
-            if let Err(e) = client_clone.shutdown().await {
-                error!("Error during client shutdown: {}", e);
-            }
-        });
-    }
-}
+// impl Drop for Client {
+//     fn drop(&mut self) {
+//         // When client is dropped, spawn a blocking task to ensure shutdown
+//         let client_clone = self.clone();
+//         tokio::spawn(async move {
+//             if let Err(e) = client_clone.shutdown().await {
+//                 error!("Error during client shutdown: {}", e);
+//             }
+//         });
+//     }
+// }
 
 // Allow cloning the client for use in async contexts
 impl Clone for Client {
