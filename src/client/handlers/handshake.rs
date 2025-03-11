@@ -9,7 +9,6 @@ use log::error;
 
 use crate::client::client::Client;
 use crate::client::services::ServiceProvider;
-use crate::client::transport::DirectIOTransport;
 use crate::protocol::{
     ClientCapabilities,
     Error,
@@ -20,6 +19,8 @@ use crate::protocol::{
     JSONRPCNotification,
     Method,
     PROTOCOL_VERSION,
+    InitializedNotification,
+    ServerCapabilities,
 };
 use crate::client::services::lifecycle::LifecycleState;
 
@@ -40,17 +41,17 @@ pub trait HandshakeHandler: Send + Sync {
 }
 
 /// Default implementation of the handshake handler
-pub struct DefaultHandshakeHandler<T: DirectIOTransport + 'static> {
+pub struct DefaultHandshakeHandler {
     /// The underlying client
-    client: Arc<Client<T>>,
+    client: Arc<Client>,
 
     /// Service provider for accessing services
     service_provider: Arc<ServiceProvider>,
 }
 
-impl<T: DirectIOTransport + 'static> DefaultHandshakeHandler<T> {
+impl DefaultHandshakeHandler {
     /// Create a new handshake handler
-    pub fn new(client: Arc<Client<T>>, service_provider: Arc<ServiceProvider>) -> Self {
+    pub fn new(client: Arc<Client>, service_provider: Arc<ServiceProvider>) -> Self {
         Self {
             client,
             service_provider,
@@ -67,7 +68,7 @@ fn is_compatible_version(client_version: &str, server_version: &str) -> bool {
 }
 
 #[async_trait]
-impl<T: DirectIOTransport + 'static> HandshakeHandler for DefaultHandshakeHandler<T> {
+impl HandshakeHandler for DefaultHandshakeHandler {
     async fn initialize(&self) -> Result<InitializeResult, Error> {
         let lifecycle = self.service_provider.lifecycle_manager();
 

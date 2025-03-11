@@ -20,7 +20,6 @@ use crate::client::handlers::{
 use crate::client::services::ServiceProvider;
 use crate::client::services::subscription::Subscription;
 use crate::client::services::lifecycle::LifecycleState;
-use crate::client::transport::DirectIOTransport;
 use crate::protocol::{
     CallToolParams,
     CallToolResult,
@@ -31,20 +30,15 @@ use crate::protocol::{
     InitializeResult,
     JSONRPCMessage,
     ListPromptsResult,
-    ListResourceTemplatesResult,
-    ListResourcesResult,
     ListToolsResult,
     Method,
-    ReadResourceParams,
-    ReadResourceResult,
-    ResourceListChangedNotification,
-    ResourceUpdatedNotification,
 };
+use crate::client::model::ServerInfo;
 
-/// Composite client handler that delegates to domain-specific handlers
-pub struct CompositeClientHandler<T: DirectIOTransport + 'static> {
+/// Client handler that combines multiple specialized handlers
+pub struct CompositeClientHandler {
     /// The underlying client
-    client: Arc<Client<T>>,
+    client: Arc<Client>,
 
     /// The service provider
     service_provider: Arc<ServiceProvider>,
@@ -62,9 +56,9 @@ pub struct CompositeClientHandler<T: DirectIOTransport + 'static> {
     completion_handler: Box<dyn CompletionHandler>,
 }
 
-impl<T: DirectIOTransport + 'static> CompositeClientHandler<T> {
+impl CompositeClientHandler {
     /// Create a new composite handler with default implementations
-    pub fn new(client: Arc<Client<T>>, service_provider: Arc<ServiceProvider>) -> Self {
+    pub fn new(client: Arc<Client>, service_provider: Arc<ServiceProvider>) -> Self {
         let handshake_handler = Box::new(
             crate::client::handlers::handshake::DefaultHandshakeHandler::new(
                 client.clone(),
@@ -105,7 +99,7 @@ impl<T: DirectIOTransport + 'static> CompositeClientHandler<T> {
 
     /// Create a new composite handler with custom implementations
     pub fn with_handlers(
-        client: Arc<Client<T>>,
+        client: Arc<Client>,
         service_provider: Arc<ServiceProvider>,
         handshake_handler: Box<dyn HandshakeHandler>,
         prompt_handler: Box<dyn PromptHandler>,
@@ -184,7 +178,7 @@ impl<T: DirectIOTransport + 'static> CompositeClientHandler<T> {
 }
 
 #[async_trait]
-impl<T: DirectIOTransport + 'static> RouteHandler for CompositeClientHandler<T> {
+impl RouteHandler for CompositeClientHandler {
     async fn handle_message(&self, message: JSONRPCMessage) -> Result<(), Error> {
         // Process the message based on its type
         match &message {

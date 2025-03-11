@@ -5,14 +5,20 @@
 //! corresponding requests.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicI32, Ordering};
+use std::sync::atomic::{ AtomicI32, Ordering };
 use std::time::Duration;
-use tokio::sync::{Mutex, oneshot};
+use tokio::sync::{ Mutex, oneshot };
 use tokio::time::timeout;
-use tracing::{debug, warn};
+use tracing::{ debug, warn };
 
 use crate::protocol::{
-    Error, JSONRPCError, JSONRPCMessage, JSONRPCRequest, JSONRPCResponse, Method, RequestId,
+    Error,
+    JSONRPCError,
+    JSONRPCMessage,
+    JSONRPCRequest,
+    JSONRPCResponse,
+    Method,
+    RequestId,
 };
 
 /// Manager for handling requests and correlating them with responses
@@ -47,27 +53,24 @@ impl RequestManager {
     pub async fn create_request<P>(
         &self,
         method: Method,
-        params: Option<P>,
+        params: Option<P>
     ) -> Result<
-        (
-            JSONRPCRequest,
-            RequestId,
-            oneshot::Receiver<Result<JSONRPCResponse, Error>>,
-        ),
-        Error,
-    >
-    where
-        P: serde::Serialize,
+            (JSONRPCRequest, RequestId, oneshot::Receiver<Result<JSONRPCResponse, Error>>),
+            Error
+        >
+        where P: serde::Serialize
     {
         // Generate a new request ID
         let request_id = self.generate_id();
 
         // Serialize parameters if provided
         let params_value = match params {
-            Some(p) => Some(
-                serde_json::to_value(p)
-                    .map_err(|e| Error::Other(format!("Failed to serialize params: {}", e)))?,
-            ),
+            Some(p) =>
+                Some(
+                    serde_json
+                        ::to_value(p)
+                        .map_err(|e| Error::Other(format!("Failed to serialize params: {}", e)))?
+                ),
             None => None,
         };
 
@@ -88,7 +91,7 @@ impl RequestManager {
     /// Register a pending request and get a future for its response
     pub async fn register_request(
         &self,
-        id: RequestId,
+        id: RequestId
     ) -> oneshot::Receiver<Result<JSONRPCResponse, Error>> {
         let (tx, rx) = oneshot::channel();
 
@@ -103,17 +106,14 @@ impl RequestManager {
     pub async fn complete_request(
         &self,
         id: &RequestId,
-        response: Result<JSONRPCResponse, Error>,
+        response: Result<JSONRPCResponse, Error>
     ) -> bool {
         let mut pending = self.pending_requests.lock().await;
 
         if let Some(sender) = pending.remove(id) {
             // Send the response through the channel
             if sender.send(response).is_err() {
-                warn!(
-                    "Failed to send response for request {:?} - receiver dropped",
-                    id
-                );
+                warn!("Failed to send response for request {:?} - receiver dropped", id);
                 return false;
             }
             true
@@ -159,11 +159,12 @@ impl RequestManager {
         send_fn: F,
         method: Method,
         params: Option<serde_json::Value>,
-        timeout_duration: Option<Duration>,
-    ) -> Result<R, Error>
-    where
-        F: FnOnce(JSONRPCMessage) -> futures::future::BoxFuture<'static, Result<(), Error>>,
-        R: serde::de::DeserializeOwned,
+        timeout_duration: Option<Duration>
+    )
+        -> Result<R, Error>
+        where
+            F: FnOnce(JSONRPCMessage) -> futures::future::BoxFuture<'static, Result<(), Error>>,
+            R: serde::de::DeserializeOwned
     {
         // 1. Create the request
         let (request, request_id) = {
@@ -197,9 +198,9 @@ impl RequestManager {
                     Ok(response) => response,
                     Err(_) => {
                         // Channel closed without a response
-                        return Err(Error::Transport(
-                            "Response channel closed unexpectedly".to_string(),
-                        ));
+                        return Err(
+                            Error::Transport("Response channel closed unexpectedly".to_string())
+                        );
                     }
                 }
             }
@@ -208,30 +209,24 @@ impl RequestManager {
                 let mut pending = self.pending_requests.lock().await;
                 pending.remove(&request_id);
 
-                return Err(Error::Timeout(format!(
-                    "Request timed out after {:?}",
-                    timeout_duration
-                )));
+                return Err(
+                    Error::Timeout(format!("Request timed out after {:?}", timeout_duration))
+                );
             }
         })?;
 
         // Convert the response result to the expected type
         match response.result.content.get("result") {
-            Some(value) => match serde_json::from_value(value.clone()) {
-                Ok(typed_result) => Ok(typed_result),
-                Err(e) => Err(Error::Other(format!(
-                    "Failed to deserialize response: {}",
-                    e
-                ))),
-            },
+            Some(value) =>
+                match serde_json::from_value(value.clone()) {
+                    Ok(typed_result) => Ok(typed_result),
+                    Err(e) => Err(Error::Other(format!("Failed to deserialize response: {}", e))),
+                }
             None => {
                 // Try deserializing the whole result
                 match serde_json::from_value(serde_json::to_value(response.result.content)?) {
                     Ok(typed_result) => Ok(typed_result),
-                    Err(e) => Err(Error::Other(format!(
-                        "Failed to deserialize response: {}",
-                        e
-                    ))),
+                    Err(e) => Err(Error::Other(format!("Failed to deserialize response: {}", e))),
                 }
             }
         }

@@ -18,7 +18,6 @@ use crate::client::services::{
     subscription::{ Subscription, SubscriptionManager },
     lifecycle::{ LifecycleState, LifecycleManager },
 };
-use crate::client::transport::{ BoxedDirectIOTransport, DirectIOTransport };
 use crate::protocol::{
     CallToolParams,
     CallToolResult,
@@ -48,6 +47,9 @@ use crate::protocol::{
     JSONRPCMessage,
 };
 
+use super::transport::Transport;
+use crate::client::transport::ConnectionStatus;
+
 /// Configuration for client session
 #[derive(Debug, Clone)]
 pub struct ClientSessionConfig {
@@ -69,7 +71,7 @@ impl Default for ClientSessionConfig {
 /// Main client session for handling MCP protocol communication
 pub struct ClientSession {
     /// The client instance
-    client: Arc<Client<BoxedDirectIOTransport>>,
+    client: Arc<Client>,
     /// Subscription manager
     subscription_manager: Arc<SubscriptionManager>,
     /// Progress tracker
@@ -82,14 +84,11 @@ pub struct ClientSession {
 
 impl ClientSession {
     /// Create a new client session with the given transport
-    pub fn new(transport: Box<dyn DirectIOTransport + 'static>) -> Self {
-        debug!("Creating ClientSession with BoxedDirectIOTransport");
+    pub fn new(transport: Box<dyn Transport + 'static>) -> Self {
+        debug!("Creating ClientSession with Transport");
 
-        // Wrap the boxed transport in our wrapper type
-        let boxed_transport = BoxedDirectIOTransport(transport);
-
-        // Create the client with the wrapped transport
-        let client = Arc::new(Client::new(boxed_transport, ClientConfig::default()));
+        // Create the client with the transport
+        let client = Arc::new(Client::new(transport, ClientConfig::default()));
 
         // Create separate notification router instead of using client's to avoid circular references
         let notification_router = Arc::new(NotificationRouter::new());
@@ -104,12 +103,9 @@ impl ClientSession {
     }
 
     /// Create a new client session builder
-    pub fn builder(transport: Box<dyn DirectIOTransport + 'static>) -> ClientSessionBuilder {
-        // Wrap the transport in our wrapper type
-        let boxed_transport = BoxedDirectIOTransport(transport);
-
-        // Create a builder with the wrapped transport
-        ClientSessionBuilder::new(boxed_transport)
+    pub fn builder(transport: Box<dyn Transport + 'static>) -> ClientSessionBuilder {
+        // Create a builder with the transport
+        ClientSessionBuilder::new(transport)
     }
 
     /// Generate a unique request ID based on current timestamp
@@ -222,6 +218,16 @@ impl ClientSession {
         self.server_info.read().await.clone()
     }
 
+    /// Check if the client session is connected
+    pub fn is_connected(&self) -> bool {
+        self.client.is_connected()
+    }
+
+    /// Subscribe to connection status updates
+    pub fn subscribe_status(&self) -> tokio::sync::broadcast::Receiver<ConnectionStatus> {
+        self.client.subscribe_status()
+    }
+
     /// Check if the server has a specific capability
     pub async fn has_capability(&self, capability: &str) -> bool {
         debug!("has_capability called - not implemented");
@@ -237,7 +243,14 @@ impl ClientSession {
     pub async fn send_request<P, R>(&self, method: Method, params: P) -> Result<R, Error>
         where P: serde::Serialize + Send + Sync, R: serde::de::DeserializeOwned + Send + Sync
     {
-        debug!("send_request called with method: {}", method);
+        // Double-check connection status directly
+        debug!("Client session checking connection status before sending request");
+        let is_connected = self.is_connected();
+        if !is_connected {
+            return Err(
+                Error::Transport("Transport not connected - cannot send request".to_string())
+            );
+        }
 
         // Delegate to the client - handle the error but don't shutdown
         let result = self.client.send_request(method.clone(), params).await;
@@ -379,10 +392,10 @@ impl ClientSession {
     }
 }
 
-/// Builder for creating ClientSession instances with BoxedDirectIOTransport
+/// Builder for creating ClientSession instances
 pub struct ClientSessionBuilder {
     /// Transport to use for communication
-    transport: BoxedDirectIOTransport,
+    transport: Box<dyn Transport + 'static>,
 
     /// Session configuration
     config: ClientSessionConfig,
@@ -390,7 +403,7 @@ pub struct ClientSessionBuilder {
 
 impl ClientSessionBuilder {
     /// Create a new client session builder
-    pub fn new(transport: BoxedDirectIOTransport) -> Self {
+    pub fn new(transport: Box<dyn Transport + 'static>) -> Self {
         Self {
             transport,
             config: ClientSessionConfig::default(),
@@ -409,15 +422,9 @@ impl ClientSessionBuilder {
         self
     }
 
-    /// Build the client session with the current configuration
+    /// Build the client session with the configured options
     pub fn build(self) -> ClientSession {
-        debug!("Building ClientSession from builder");
-
-        // Convert our transport to a boxed DirectIOTransport
-        let transport = self.transport;
-
-        // Create the client session
-        let client = Arc::new(Client::new(transport, ClientConfig::default()));
+        let client = Arc::new(Client::new(self.transport, ClientConfig::default()));
 
         // Create the session with the client
         let session = ClientSession {

@@ -5,12 +5,20 @@
 
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::watch;
 
 use crate::client::clientsession::ClientSession;
 use crate::client::services::notification::NotificationRouter;
-use crate::client::transport::DirectIOTransport;
+use crate::client::transport::Transport;
+use crate::client::transport::state::{ TransportState, TransportStateChannel };
 use crate::protocol::{
-    Error, Implementation, InitializeResult, JSONRPCMessage, JSONRPCResponse, RequestId, ServerCapabilities,
+    Error,
+    Implementation,
+    InitializeResult,
+    JSONRPCMessage,
+    JSONRPCResponse,
+    RequestId,
+    ServerCapabilities,
 };
 
 // Reuse the MockTransport from client_tests (we would need to refactor to share this)
@@ -19,6 +27,7 @@ struct MockTransport {
     send_count: usize,
     receive_count: usize,
     connected: bool,
+    state: TransportStateChannel,
 }
 
 impl MockTransport {
@@ -27,7 +36,8 @@ impl MockTransport {
             messages: Vec::new(),
             send_count: 0,
             receive_count: 0,
-            connected: true,
+            connected: false,
+            state: TransportStateChannel::new(),
         }
     }
 
@@ -81,35 +91,56 @@ impl MockTransport {
     }
 }
 
-#[async_trait::async_trait]
 impl crate::client::transport::Transport for MockTransport {
     async fn start(&mut self) -> Result<(), Error> {
         self.connected = true;
+
+        // Update the state
+        self.state.update(|s| {
+            s.has_endpoint = true;
+            s.has_connected = true;
+            s.endpoint_url = Some("mock://test/endpoint".to_string());
+            s.session_id = Some("mock-session-id".to_string());
+        });
+
         Ok(())
     }
 
     async fn close(&mut self) -> Result<(), Error> {
         self.connected = false;
+
+        // Update the state
+        self.state.reset();
+
         Ok(())
     }
 
-    async fn is_connected(&self) -> bool {
+    fn is_connected(&self) -> bool {
         self.connected
     }
 
-    async fn send_to(&mut self, client_id: &str, message: &JSONRPCMessage) -> Result<(), Error> {
+    fn subscribe_state(&self) -> watch::Receiver<TransportState> {
+        self.state.receiver()
+    }
+
+    fn subscribe_status(
+        &self
+    ) -> tokio::sync::broadcast::Receiver<crate::client::transport::ConnectionStatus> {
+        // Create a new channel each time since we don't need to track subscribers in tests
+        let (tx, rx) = tokio::sync::broadcast::channel(1);
+        rx
+    }
+
+    async fn send(&mut self, message: &JSONRPCMessage) -> Result<(), Error> {
         self.messages.push(message.clone());
         self.send_count += 1;
         Ok(())
     }
 
-    async fn set_app_state(&mut self, app_state: Arc<crate::server::server::AppState>) {
+    async fn set_app_state(&mut self, _app_state: Arc<crate::server::server::AppState>) {
         // Not needed for client tests
     }
-}
 
-#[async_trait::async_trait]
-impl DirectIOTransport for MockTransport {
     async fn receive(&mut self) -> Result<(Option<String>, JSONRPCMessage), Error> {
         if self.receive_count < self.messages.len() {
             let message = self.messages[self.receive_count].clone();
@@ -120,12 +151,6 @@ impl DirectIOTransport for MockTransport {
             tokio::time::sleep(Duration::from_millis(100)).await;
             Err(Error::Transport("No more messages".to_string()))
         }
-    }
-
-    async fn send(&mut self, message: &JSONRPCMessage) -> Result<(), Error> {
-        self.messages.push(message.clone());
-        self.send_count += 1;
-        Ok(())
     }
 }
 
@@ -175,9 +200,9 @@ async fn test_client_session_initialize() {
 #[tokio::test]
 async fn test_client_session_resources() {
     // Create a mock transport
-    let transport = Box::new(MockTransport::new());
+    let transport = Box::new(MockTransport::with_initialize_response());
 
-    // Create the session
+    // Create a client session
     let session = ClientSession::new(transport);
 
     // List resources should currently return Error::Other
@@ -195,8 +220,10 @@ async fn test_client_session_resources() {
 /// in a similar pattern to how Python SDK is used
 #[tokio::test]
 async fn test_python_sdk_compatibility() {
-    // Create a session as in Python SDK: Client(...).connect()
-    let transport = Box::new(MockTransport::new());
+    // Create a mock transport
+    let transport = Box::new(MockTransport::with_initialize_response());
+
+    // Create a client session
     let session = ClientSession::new(transport);
 
     // Python SDK has these main interfaces that we should match:
@@ -223,11 +250,9 @@ async fn test_python_sdk_compatibility() {
     let templates_result = session.list_resource_templates().await;
     assert!(templates_result.is_err()); // Not implemented yet
 
-    let read_result = session
-        .read_resource(crate::protocol::ReadResourceParams {
-            uri: "test/resource".to_string(),
-        })
-        .await;
+    let read_result = session.read_resource(crate::protocol::ReadResourceParams {
+        uri: "test/resource".to_string(),
+    }).await;
     assert!(read_result.is_err()); // Not implemented yet
 
     // Prompts operations
@@ -241,12 +266,10 @@ async fn test_python_sdk_compatibility() {
     let tools_result = session.list_tools().await;
     assert!(tools_result.is_err()); // Not implemented yet
 
-    let tool_result = session
-        .call_tool(crate::protocol::CallToolParams {
-            name: "test".to_string(),
-            arguments: None,
-        })
-        .await;
+    let tool_result = session.call_tool(crate::protocol::CallToolParams {
+        name: "test".to_string(),
+        arguments: None,
+    }).await;
     assert!(tool_result.is_err()); // Not implemented yet
 }
 
@@ -254,9 +277,9 @@ async fn test_python_sdk_compatibility() {
 #[tokio::test]
 async fn test_client_session_subscriptions() {
     // Create a mock transport
-    let transport = Box::new(MockTransport::new());
+    let transport = Box::new(MockTransport::with_initialize_response());
 
-    // Create the session
+    // Create a client session
     let session = ClientSession::new(transport);
 
     // Test that we can create subscriptions (even if they're not active yet)

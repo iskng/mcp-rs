@@ -10,7 +10,6 @@ use std::time::Duration;
 
 use crate::client::client::Client;
 use crate::client::services::ServiceProvider;
-use crate::client::transport::DirectIOTransport;
 use crate::protocol::{ CallToolParams, CallToolResult, Error, ListToolsResult };
 
 /// Handler trait for tool operations
@@ -48,17 +47,17 @@ pub trait ToolHandler: Send + Sync {
 }
 
 /// Default implementation of the tool handler
-pub struct DefaultToolHandler<T: DirectIOTransport + 'static> {
+pub struct DefaultToolHandler {
     /// The underlying client
-    client: Arc<Client<T>>,
+    client: Arc<Client>,
 
     /// Service provider for accessing services
     service_provider: Arc<ServiceProvider>,
 }
 
-impl<T: DirectIOTransport + 'static> DefaultToolHandler<T> {
+impl DefaultToolHandler {
     /// Create a new tool handler
-    pub fn new(client: Arc<Client<T>>, service_provider: Arc<ServiceProvider>) -> Self {
+    pub fn new(client: Arc<Client>, service_provider: Arc<ServiceProvider>) -> Self {
         Self {
             client,
             service_provider,
@@ -67,7 +66,7 @@ impl<T: DirectIOTransport + 'static> DefaultToolHandler<T> {
 }
 
 #[async_trait]
-impl<T: DirectIOTransport + 'static> ToolHandler for DefaultToolHandler<T> {
+impl ToolHandler for DefaultToolHandler {
     async fn list_tools(&self) -> Result<ListToolsResult, Error> {
         // Implementation will be completed in a subsequent PR
         Err(Error::Other("Not implemented in this handler yet".to_string()))

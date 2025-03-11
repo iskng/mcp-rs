@@ -7,8 +7,7 @@ use std::sync::Arc;
 
 use crate::client::client::Client;
 use crate::client::services::ServiceProvider;
-use crate::client::transport::DirectIOTransport;
-use crate::protocol::{CompleteParams, CompleteResult, Error};
+use crate::protocol::{ CompleteParams, CompleteResult, Error };
 
 /// Handler trait for completion operations
 #[async_trait]
@@ -18,17 +17,17 @@ pub trait CompletionHandler: Send + Sync {
 }
 
 /// Default implementation of the completion handler
-pub struct DefaultCompletionHandler<T: DirectIOTransport + 'static> {
+pub struct DefaultCompletionHandler {
     /// The underlying client
-    client: Arc<Client<T>>,
+    client: Arc<Client>,
 
     /// Service provider for accessing services
     service_provider: Arc<ServiceProvider>,
 }
 
-impl<T: DirectIOTransport + 'static> DefaultCompletionHandler<T> {
+impl DefaultCompletionHandler {
     /// Create a new completion handler
-    pub fn new(client: Arc<Client<T>>, service_provider: Arc<ServiceProvider>) -> Self {
+    pub fn new(client: Arc<Client>, service_provider: Arc<ServiceProvider>) -> Self {
         Self {
             client,
             service_provider,
@@ -37,11 +36,9 @@ impl<T: DirectIOTransport + 'static> DefaultCompletionHandler<T> {
 }
 
 #[async_trait]
-impl<T: DirectIOTransport + 'static> CompletionHandler for DefaultCompletionHandler<T> {
+impl CompletionHandler for DefaultCompletionHandler {
     async fn complete(&self, params: CompleteParams) -> Result<CompleteResult, Error> {
         // Implementation will be completed in a subsequent PR
-        Err(Error::Other(
-            "Not implemented in this handler yet".to_string(),
-        ))
+        Err(Error::Other("Not implemented in this handler yet".to_string()))
     }
 }

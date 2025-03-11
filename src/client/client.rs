@@ -3,37 +3,34 @@
 //! This module implements the core MCP client, responsible for managing the transport,
 //! request tracking, notification routing, and lifecycle management.
 
-use crate::client::transport::DirectIOTransport;
+use crate::client::transport::{ Transport, ConnectionStatus };
 use crate::protocol::{
     ClientMessage,
     Error,
     JSONRPCMessage,
     JSONRPCNotification,
-    JSONRPCRequest,
-    JSONRPCResponse,
     Message,
     RequestId,
-    errors::rpc_error_to_error,
-    JSONRPCError,
 };
 use crate::{
     client::services::{
         lifecycle::{ LifecycleManager, LifecycleState },
         notification::NotificationRouter,
-        request::RequestManager,
+        service_provider::ServiceProvider,
     },
     protocol::Method,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
-use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::{ AtomicI64, Ordering };
+use std::sync::atomic::{ AtomicI64, Ordering, AtomicBool };
 use std::time::Duration;
-use tokio::sync::{ Mutex, mpsc, oneshot };
+use tokio::sync::{ Mutex, mpsc, oneshot, broadcast, RwLock };
 use tokio::task::JoinHandle;
-use tokio::time::timeout;
 use tracing::{ debug, error, info, warn };
+use std::pin::Pin;
+use std::future::Future;
+use crate::client::transport::state::TransportState;
 
 /// Default request timeout in seconds
 const DEFAULT_REQUEST_TIMEOUT: u64 = 30;
@@ -62,15 +59,24 @@ impl Default for ClientConfig {
     }
 }
 
-/// Builder for creating Client instances with custom configuration
-pub struct ClientBuilder<T: DirectIOTransport + 'static> {
-    transport: T,
+/// Builder for creating MCP clients
+pub struct ClientBuilder {
+    transport: Box<dyn Transport + 'static>,
     config: ClientConfig,
 }
 
-impl<T: DirectIOTransport + 'static> ClientBuilder<T> {
+impl ClientBuilder {
     /// Create a new client builder with the given transport
-    pub fn new(transport: T) -> Self {
+    pub fn new(transport: Box<dyn Transport + 'static>) -> Self {
+        // Make sure the transport state is properly initialized
+        let state = transport.subscribe_state();
+        let initial_state = state.borrow().clone();
+        debug!(
+            "Creating ClientBuilder with transport. Initial state: has_endpoint={}, has_connected={}",
+            initial_state.has_endpoint,
+            initial_state.has_connected
+        );
+
         Self {
             transport,
             config: ClientConfig::default(),
@@ -89,68 +95,64 @@ impl<T: DirectIOTransport + 'static> ClientBuilder<T> {
         self
     }
 
-    /// Set the delay between reconnection attempts
+    /// Set the reconnection delay
     pub fn with_reconnect_delay(mut self, delay: Duration) -> Self {
         self.config.reconnect_delay = delay;
         self
     }
 
-    /// Enable or disable automatic reconnection
+    /// Set whether to automatically reconnect on connection loss
     pub fn with_auto_reconnect(mut self, auto_reconnect: bool) -> Self {
         self.config.auto_reconnect = auto_reconnect;
         self
     }
 
-    /// Build the client with the configured options
-    pub fn build(self) -> Client<T> {
+    /// Build the client
+    pub fn build(self) -> Client {
         Client::new(self.transport, self.config)
     }
 }
 
 /// Main client for MCP protocol communication
-pub struct Client<T: DirectIOTransport + 'static> {
+pub struct Client {
     /// The transport used for communication
-    transport: Arc<Mutex<T>>,
-    /// Counter for generating request IDs
-    request_id_counter: AtomicI64,
-    /// Map of pending requests by ID
-    pending_requests: Arc<
-        Mutex<HashMap<RequestId, oneshot::Sender<Result<JSONRPCResponse, Error>>>>
-    >,
-    /// Notification router for handling notifications
-    notification_router: Arc<NotificationRouter>,
-    /// Lifecycle manager for tracking connection state
-    lifecycle: Arc<LifecycleManager>,
-    /// Request manager for tracking requests
-    request_manager: Arc<RequestManager>,
+    transport: Arc<Mutex<Box<dyn Transport + 'static>>>,
+    /// Service provider for accessing shared services
+    service_provider: Arc<ServiceProvider>,
     /// Handle to the message processing task
     message_task: Mutex<Option<JoinHandle<()>>>,
     /// Shutdown signal sender for the message task
     message_task_shutdown: Arc<Mutex<Option<mpsc::Sender<()>>>>,
     /// Client configuration
     config: ClientConfig,
-    /// Flag indicating if the client is shut down
-    shutdown: Arc<Mutex<bool>>,
+    /// Flag indicating if the client is shut down - using atomic for better performance
+    shutdown: Arc<AtomicBool>,
+    /// Connection status broadcaster
+    status_tx: Arc<broadcast::Sender<ConnectionStatus>>,
+    /// Transport state receiver for lock-free connection status
+    transport_state: tokio::sync::watch::Receiver<TransportState>,
 }
 
-impl<T: DirectIOTransport + 'static> Client<T> {
-    /// Create a new client with the given transport
-    pub fn new(transport: T, config: ClientConfig) -> Self {
-        let lifecycle = Arc::new(LifecycleManager::new());
-        let notification_router = Arc::new(NotificationRouter::new());
-        let request_manager = Arc::new(RequestManager::new(config.request_timeout));
+impl Client {
+    /// Create a new client with the given transport and configuration
+    pub fn new(transport: Box<dyn Transport + 'static>, config: ClientConfig) -> Self {
+        // Create a broadcast channel for status updates
+        let (status_tx, _) = broadcast::channel(16);
+
+        // Get a receiver for the transport state
+        let transport_state = transport.subscribe_state();
+
+        let service_provider = Arc::new(ServiceProvider::new());
 
         Self {
             transport: Arc::new(Mutex::new(transport)),
-            request_id_counter: AtomicI64::new(1),
-            pending_requests: Arc::new(Mutex::new(HashMap::new())),
-            notification_router,
-            lifecycle,
-            request_manager,
+            service_provider,
             message_task: Mutex::new(None),
             message_task_shutdown: Arc::new(Mutex::new(None)),
             config,
-            shutdown: Arc::new(Mutex::new(false)),
+            shutdown: Arc::new(AtomicBool::new(false)),
+            status_tx: Arc::new(status_tx),
+            transport_state,
         }
     }
 
@@ -158,33 +160,100 @@ impl<T: DirectIOTransport + 'static> Client<T> {
     pub async fn start(&self) -> Result<(), Error> {
         info!("Starting MCP client");
 
-        // Check that we're in the initialization state
-        let current_state = self.lifecycle.current_state().await;
-        if current_state != LifecycleState::Initialization {
-            return Err(
-                Error::Protocol(
-                    format!(
-                        "Client must be in Initialization state to start (current state: {:?})",
-                        current_state
-                    )
-                )
-            );
+        // Ensure we're not already started
+        if let Some(_) = *self.message_task.lock().await {
+            return Err(Error::Protocol("Client is already started".to_string()));
         }
 
-        // Start the transport and ensure it's connected
+        debug!("Starting transport");
         {
+            // Start the transport
             let mut transport = self.transport.lock().await;
-            // Start the transport - this will wait for the connection to be established
             transport.start().await?;
         }
 
-        // Once transport is connected, spawn message processing task
+        // Get a status subscriber from transport and forward to client subscribers
+        let mut status_rx;
+        {
+            let transport = self.transport.lock().await;
+            status_rx = transport.subscribe_status();
+        }
+
+        // Spawn a task to forward status updates
+        let status_tx = self.status_tx.clone();
+        let shutdown = self.shutdown.clone();
+        tokio::spawn(async move {
+            while !shutdown.load(Ordering::SeqCst) {
+                match status_rx.recv().await {
+                    Ok(status) => {
+                        debug!("Forwarding transport status: {:?}", status);
+                        let _ = status_tx.send(status);
+                    }
+                    Err(_) => {
+                        break;
+                    }
+                }
+            }
+        });
+
+        // Wait for connection to be established (max 2 seconds)
+        let start_time = std::time::Instant::now();
+        let timeout = std::time::Duration::from_secs(2);
+
+        // Create a receiver from the transport state
+        let mut transport_state_rx = self.transport_state.clone();
+
+        while !transport_state_rx.borrow().is_connected() {
+            if start_time.elapsed() > timeout {
+                return Err(Error::Transport("Failed to connect within timeout".to_string()));
+            }
+
+            // Log the current state for debugging
+            let state = transport_state_rx.borrow().clone();
+            debug!(
+                "Waiting for transport connection. Current state: has_endpoint={}, has_connected={}, endpoint_url={:?}",
+                state.has_endpoint,
+                state.has_connected,
+                state.endpoint_url
+            );
+
+            // Wait for the state to change or a short timeout
+            match
+                tokio::time::timeout(
+                    std::time::Duration::from_millis(100),
+                    transport_state_rx.changed()
+                ).await
+            {
+                Ok(Ok(_)) => {
+                    debug!("Transport state changed, checking connection status");
+                    // The state changed, check if we're connected on next loop iteration
+                }
+                Ok(Err(e)) => {
+                    warn!("Error waiting for transport state change: {}", e);
+                    // Continue in the loop to check again after a short delay
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                }
+                Err(_) => {
+                    // Timeout waiting for change, just continue the loop
+                    debug!("No transport state change within timeout, continuing to poll");
+                }
+            }
+        }
+
+        // Log the connected state
+        let state = transport_state_rx.borrow().clone();
+        debug!(
+            "Transport connected. State: has_endpoint={}, has_connected={}, endpoint_url={:?}, session_id={:?}",
+            state.has_endpoint,
+            state.has_connected,
+            state.endpoint_url,
+            state.session_id
+        );
+
+        // Spawn the message processing task
         self.spawn_message_task().await?;
 
-        // We intentionally keep the lifecycle in Initialization state
-        // This allows sending the Initialize request which requires Initialization state
-
-        info!("MCP client started successfully - ready for initialization");
+        info!("MCP client started successfully");
         Ok(())
     }
 
@@ -208,194 +277,205 @@ impl<T: DirectIOTransport + 'static> Client<T> {
 
         // Clone the necessary Arc references
         let transport = self.transport.clone();
-        let pending_requests = self.pending_requests.clone();
-        let notification_router = self.notification_router.clone();
-        let lifecycle = self.lifecycle.clone();
+        let service_provider = self.service_provider.clone();
         let shutdown = self.shutdown.clone();
 
         // Spawn the message processing task
         let handle = tokio::spawn(async move {
             // Loop until shutdown is signaled
             loop {
+                // Check for shutdown before acquiring any locks
+                if shutdown.load(Ordering::Relaxed) {
+                    debug!("Client is shutting down, breaking message loop");
+                    break;
+                }
+
                 tokio::select! {
                     Some(_) = shutdown_rx.recv() => {
                         debug!("Received shutdown signal, stopping message loop");
                         break;
                     }
                     result = async {
-                        let mut transport_guard = transport.lock().await;
-                        transport_guard.receive().await
+                        // Minimize the time holding the transport lock by only using it for receive
+                        let result = {
+                            // Add tracing around the lock acquisition
+                            let mut transport_guard = match tokio::time::timeout(
+                                tokio::time::Duration::from_secs(1),
+                                transport.lock()
+                            ).await {
+                                Ok(guard) => {
+                                    guard
+                                },
+                                Err(_) => {
+                                    // If we fail to acquire the lock, yield to other tasks and try again
+                                    debug!("Message loop failed to acquire transport lock, yielding");
+                                    // Sleep briefly to allow other tasks to run
+                                    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                                    return Err(Error::Transport("Timeout acquiring transport lock".to_string()));
+                                }
+                            };
+                            
+                            // Attempt to receive with a timeout
+                            let recv_result = tokio::time::timeout(
+                                tokio::time::Duration::from_millis(500),
+                                transport_guard.receive()
+                            ).await;
+                            
+                            // Process the receive result
+                            match recv_result {
+                                Ok(result) => {
+                                    debug!("Message loop received message successfully");
+                                    result
+                                },
+                                Err(_) => {
+                                    Err(Error::Transport("Receive operation timed out".to_string()))
+                                }
+                            }
+                        };
+                        result
                     } => {
                         match result {
                             Ok((_, message)) => {
                                 // Process the received message
                                 let _ = Self::process_message(
                                     message,
-                                    &pending_requests,
-                                    &notification_router,
-                                    &lifecycle
-                                ).await;
+                                    &service_provider
+                                ).await.map_err(|e| {
+                                    error!("Error processing message: {}", e);
+                                });
                             }
                             Err(e) => {
-                                error!("Error receiving message: {}", e);
-
-                                // Update lifecycle state
-                                let _ = lifecycle.set_error_state(format!("Transport error: {}", e)).await;
-
                                 // Check if we're shutting down
-                                let is_shutdown = *shutdown.lock().await;
-                                if is_shutdown {
+                                if shutdown.load(Ordering::Relaxed) {
                                     debug!("Client is shutting down, stopping message loop");
                                     break;
                                 }
-
-                                // Briefly pause before retrying
-                                tokio::time::sleep(Duration::from_millis(100)).await;
+                                
+                                // If it's a timeout error, just continue to the next iteration
+                                if e.to_string().contains("timed out") || e.to_string().contains("Timeout") {
+                                    // Just yield to other tasks and continue
+                                    tokio::task::yield_now().await;
+                                    continue;
+                                }
+                                
+                                // For other errors, log them
+                                warn!("Error receiving message: {}", e);
+                                
+                                // Short sleep to avoid busy loops on error conditions
+                                tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
                             }
                         }
                     }
                 }
             }
-
-            debug!("Message processing loop terminated");
         });
 
-        // Store the task handle
         *task_guard = Some(handle);
-
         Ok(())
     }
 
     /// Process a received message
     async fn process_message(
         message: JSONRPCMessage,
-        pending_requests: &Arc<
-            Mutex<HashMap<RequestId, oneshot::Sender<Result<JSONRPCResponse, Error>>>>
-        >,
-        notification_router: &Arc<NotificationRouter>,
-        lifecycle: &Arc<LifecycleManager>
+        service_provider: &Arc<ServiceProvider>
     ) -> Result<(), Error> {
         match message {
             JSONRPCMessage::Response(response) => {
                 debug!("Received response: {:?}", response.id);
 
                 // If this is an initialize response, we need special handling
-                let current_state = lifecycle.current_state().await;
+                let current_state = service_provider.lifecycle_manager().current_state().await;
                 if current_state == LifecycleState::Initialization {
                     // Transition to Operation state when we receive the initialize response
-                    debug!(
-                        "Received response during Initialization state, transitioning to Operation"
-                    );
+                    debug!("Received initialize response, transitioning to Operation state");
 
-                    if let Err(e) = lifecycle.transition_to(LifecycleState::Operation).await {
+                    if
+                        let Err(e) = service_provider
+                            .lifecycle_manager()
+                            .transition_to(LifecycleState::Operation).await
+                    {
                         warn!("Failed to transition to Operation: {}", e);
                     }
                 }
 
-                // Find the corresponding pending request
-                let mut requests = pending_requests.lock().await;
-                if let Some(sender) = requests.remove(&response.id) {
-                    // Send the response to the waiting task
-                    if sender.send(Ok(response.clone())).is_err() {
-                        warn!("Failed to send response to requester (channel closed)");
-                    }
-                } else {
-                    warn!("Received response for unknown request ID: {:?}", response.id);
+                // Handle the response using the request manager
+                if let Err(e) = service_provider.request_manager().handle_response(response).await {
+                    warn!("Failed to handle response: {}", e);
+                    return Err(e);
                 }
-
-                Ok(())
             }
             JSONRPCMessage::Error(error) => {
-                debug!("Received error response: {}", error.error.message);
-
-                // Convert the JSONRPCError to an Error variant
-                let error_variant = rpc_error_to_error(&error);
-
-                // Find the corresponding pending request
-                let mut requests = pending_requests.lock().await;
-                if let Some(sender) = requests.remove(&error.id) {
-                    // Send the error to the waiting task
-                    if sender.send(Err(error_variant.clone())).is_err() {
-                        warn!("Failed to send error to requester (channel closed)");
-                    }
-                } else {
-                    warn!("Received error for unknown request ID: {:?}", error.id);
-                }
+                debug!("Received error: {:?}", error);
 
                 // Update lifecycle state for serious errors
                 if error.error.code < 0 {
-                    let _ = lifecycle.set_error_state(
-                        format!("Protocol error: {}", error.error.message)
-                    ).await;
+                    let _ = service_provider
+                        .lifecycle_manager()
+                        .set_error_state(format!("Protocol error: {}", error.error.message)).await;
                 }
 
-                Ok(())
+                // Handle the error using the request manager
+                if let Err(e) = service_provider.request_manager().handle_error(error).await {
+                    warn!("Failed to handle error: {}", e);
+                    return Err(e);
+                }
             }
             JSONRPCMessage::Notification(notification) => {
-                debug!("Received notification: {}", notification.method);
+                debug!("Received notification: {:?}", notification.method);
 
                 // Enforce proper sequencing for notifications
-                let current_state = lifecycle.current_state().await;
+                let current_state = service_provider.lifecycle_manager().current_state().await;
 
                 // Check if this is an initialized notification
                 if notification.method == Method::NotificationsInitialized {
-                    // The only place we expect this is in Initialization state
+                    debug!("Received initialized notification");
+
                     if current_state != LifecycleState::Initialization {
-                        warn!(
-                            "Received initialized notification in unexpected state: {:?}",
-                            current_state
-                        );
+                        warn!("Received initialized notification but not in initialization state");
                     } else {
                         // Transition to Operation state
-                        let _ = lifecycle.transition_to(LifecycleState::Operation).await;
+                        let _ = service_provider
+                            .lifecycle_manager()
+                            .transition_to(LifecycleState::Operation).await;
                     }
                 } else {
-                    // For other notifications, generally they should come when we're in Operation state
-
-                    // Logging is an exception which can come early
-                    if
-                        current_state != LifecycleState::Operation &&
-                        !notification.method.is_logging_method() &&
-                        notification.method != Method::NotificationsProgress &&
-                        notification.method != Method::NotificationsCancelled
-                    {
+                    // For other notifications, we should be in Operation state
+                    if current_state != LifecycleState::Operation {
                         debug!(
-                            "Received notification {} in non-Operation state: {:?}",
-                            notification.method,
-                            current_state
+                            "Received notification in non-operation state: {:?}",
+                            notification.method
                         );
                     }
                 }
 
                 // Process the notification through the router
-                if let Err(e) = notification_router.handle_notification(notification).await {
+                if
+                    let Err(e) = service_provider
+                        .notification_router()
+                        .handle_notification(notification).await
+                {
                     warn!("Failed to handle notification: {}", e);
                 }
-
-                Ok(())
             }
             JSONRPCMessage::Request(request) => {
-                warn!("Received unexpected request: {}", request.method);
+                debug!("Received request: {:?}", request.method);
 
                 // Check if we're in a state to handle this
-                let current_state = lifecycle.current_state().await;
+                let current_state = service_provider.lifecycle_manager().current_state().await;
 
                 // Only allow ping requests in any state
                 if request.method != Method::Ping && current_state != LifecycleState::Operation {
-                    return Err(
-                        Error::Protocol(
-                            format!(
-                                "Client must be in Operation state to send requests (current: {:?})",
-                                current_state
-                            )
-                        )
-                    );
+                    warn!("Received request in non-operation state: {:?}", request.method);
+                    // TODO: Send error response
+                    return Ok(());
                 }
 
-                // Client doesn't typically handle requests, only server does
-                Ok(())
+                // TODO: Route request to appropriate handler
+                warn!("Client-side request handling not implemented yet");
             }
         }
+
+        Ok(())
     }
 
     /// Send a request and wait for a response
@@ -404,36 +484,26 @@ impl<T: DirectIOTransport + 'static> Client<T> {
     {
         info!("Sending request: {}", method);
 
-        // Check if client is shut down
-        {
-            let shutdown = self.shutdown.lock().await;
-            if *shutdown {
-                return Err(Error::Other("Client is shut down".to_string()));
-            }
+        // Quick check for shutdown state - avoid lock if possible
+        if self.shutdown.load(Ordering::Relaxed) {
+            return Err(Error::Other("Client is shut down".to_string()));
         }
 
         // Check if the client is in an appropriate state for this request
-        if let Err(e) = self.lifecycle.validate_method(&method).await {
+        if let Err(e) = self.service_provider.lifecycle_manager().validate_method(&method).await {
             return Err(
                 Error::Protocol(
                     format!("Cannot send request {} in current lifecycle state: {}", method, e)
                 )
             );
         }
-
-        // Generate request ID
-        let id = self.generate_id();
-
-        // Create a one-shot channel to receive the response
-        let (tx, rx) = oneshot::channel();
-
-        // Store the request in the pending requests map
-        {
-            let mut pending = self.pending_requests.lock().await;
-            pending.insert(id.clone(), tx);
+        debug!("Client is in a valid state to send request");
+        // Check if the client is connected
+        if !self.is_connected() {
+            return Err(Error::Transport("Not connected to server".to_string()));
         }
-
-        // Create the JSONRPC request with parameters
+        debug!("Client is connected to server");
+        // Serialize the parameters
         let params_value = match serde_json::to_value(params) {
             Ok(value) => Some(value),
             Err(e) => {
@@ -441,80 +511,47 @@ impl<T: DirectIOTransport + 'static> Client<T> {
             }
         };
 
-        let request = JSONRPCRequest {
-            jsonrpc: "2.0".to_string(),
-            id: id.clone(),
-            method: method.clone(),
-            params: params_value,
-        };
+        // Use the request manager to handle the request
+        debug!("Using request manager to send request: {}", method);
 
-        let message = JSONRPCMessage::Request(request);
+        // Create the send function here to avoid capturing self (which would cause nested locks)
+        let transport_clone = self.transport.clone();
+        let send_fn = move |message: JSONRPCMessage| {
+            let transport = transport_clone.clone();
+            Box::pin(async move {
+                debug!("Request manager sending message");
+                // Add timing information for lock acquisition
+                info!("Attempting to acquire transport lock at {:?}", std::time::Instant::now());
+                // Acquire transport lock only when needed
+                let lock_result = tokio::time::timeout(
+                    tokio::time::Duration::from_secs(2),
+                    transport.lock()
+                ).await;
 
-        // Send the request through the transport
-        match self.send_raw_message(message).await {
-            Ok(_) => {
-                debug!("Waiting for response to request {} with id {:?}", method, id);
-            }
-            Err(e) => {
-                // Failed to send the request, clean up the pending request
-                let mut pending = self.pending_requests.lock().await;
-                pending.remove(&id);
-
-                return Err(e);
-            }
-        }
-
-        // Wait for the response with timeout handling
-        let timeout = self.config.request_timeout;
-        match tokio::time::timeout(timeout, rx).await {
-            Ok(result) => {
-                match result {
-                    Ok(response) => {
-                        match response {
-                            Ok(response) => {
-                                // Try to deserialize the result content
-                                debug!("Received response for request {}: {:?}", method, response);
-
-                                let result_value = match
-                                    serde_json::to_value(&response.result.content)
-                                {
-                                    Ok(value) => value,
-                                    Err(e) => {
-                                        return Err(
-                                            Error::Protocol(
-                                                format!("Failed to convert response content to value: {}", e)
-                                            )
-                                        );
-                                    }
-                                };
-
-                                match serde_json::from_value::<R>(result_value) {
-                                    Ok(typed_result) => Ok(typed_result),
-                                    Err(e) => {
-                                        Err(
-                                            Error::Protocol(
-                                                format!("Failed to deserialize response: {}", e)
-                                            )
-                                        )
-                                    }
-                                }
-                            }
-                            Err(e) => Err(e),
-                        }
+                match lock_result {
+                    Ok(mut transport_guard) => {
+                        info!(
+                            "Successfully acquired transport lock at {:?}",
+                            std::time::Instant::now()
+                        );
+                        debug!("Sending message through transport after lock");
+                        let result = transport_guard.send(&message).await;
+                        debug!("sent message through transport");
+                        result
                     }
                     Err(_) => {
-                        Err(Error::Protocol("Response channel closed unexpectedly".to_string()))
+                        error!(
+                            "Failed to acquire transport lock after 2 seconds - possible deadlock"
+                        );
+                        Err(Error::Transport("Transport lock acquisition timeout".to_string()))
                     }
                 }
-            }
-            Err(_) => {
-                // Timeout occurred, remove the pending request
-                let mut pending = self.pending_requests.lock().await;
-                pending.remove(&id);
+            }) as Pin<Box<dyn Future<Output = Result<(), Error>> + Send>>
+        };
 
-                Err(Error::Timeout(format!("Request {} timed out after {:?}", method, timeout)))
-            }
-        }
+        self.service_provider
+            .request_manager()
+            .send_request(send_fn, method, params_value, Some(self.config.request_timeout)).await
     }
 
     /// Send a notification
@@ -522,41 +559,44 @@ impl<T: DirectIOTransport + 'static> Client<T> {
         where P: Serialize + Send + Sync
     {
         // Check if client is shut down
+        if self.shutdown.load(Ordering::Relaxed) {
+            return Err(Error::Other("Client is shut down".to_string()));
+        }
+
+        // Check if the client is in an appropriate state for this notification
+        if
+            let Err(e) = self.service_provider
+                .lifecycle_manager()
+                .validate_notification(&method).await
         {
-            let shutdown = self.shutdown.lock().await;
-            if *shutdown {
-                return Err(Error::Other("Client is shut down".to_string()));
-            }
+            return Err(
+                Error::Protocol(
+                    format!("Cannot send notification {} in current lifecycle state: {}", method, e)
+                )
+            );
         }
 
-        // Check if client is connected
-        if !self.is_connected().await {
-            return Err(Error::Other("Client is not connected".to_string()));
+        // Check if the client is connected
+        if !self.is_connected() {
+            return Err(Error::Transport("Not connected to server".to_string()));
         }
 
-        // Validate operation based on lifecycle state and capabilities
-        self.lifecycle.validate_method(&method).await?;
-
-        // Serialize parameters
+        // Serialize the parameters
         let params_value = match serde_json::to_value(params) {
             Ok(value) => Some(value),
             Err(e) => {
-                return Err(Error::Other(format!("Failed to serialize params: {}", e)));
+                return Err(Error::Protocol(format!("Failed to serialize params: {}", e)));
             }
         };
 
-        // Create notification message
+        // Create the notification
         let notification = JSONRPCNotification {
             jsonrpc: "2.0".to_string(),
-            method: method.clone(),
+            method: method,
             params: params_value,
         };
 
-        // Convert to JSONRPCMessage
-        let message = JSONRPCMessage::Notification(notification);
-
-        // Send the notification
-        self.send_raw_message(message).await
+        self.send_raw_message(JSONRPCMessage::Notification(notification)).await
     }
 
     /// Register a notification handler
@@ -570,7 +610,7 @@ impl<T: DirectIOTransport + 'static> Client<T> {
             F: Fn(JSONRPCNotification) -> Fut + Send + Sync + 'static,
             Fut: std::future::Future<Output = Result<(), Error>> + Send + 'static
     {
-        self.notification_router.register_handler(
+        self.service_provider.notification_router().register_handler(
             method,
             Box::new(move |notification| {
                 let fut = handler(notification);
@@ -581,48 +621,41 @@ impl<T: DirectIOTransport + 'static> Client<T> {
 
     /// Get the lifecycle manager
     pub fn lifecycle(&self) -> Arc<LifecycleManager> {
-        self.lifecycle.clone()
+        self.service_provider.lifecycle_manager()
     }
 
     /// Get the notification router
     pub fn notification_router(&self) -> Arc<NotificationRouter> {
-        self.notification_router.clone()
+        self.service_provider.notification_router()
     }
 
-    /// Check if the client is connected
-    pub async fn is_connected(&self) -> bool {
-        let transport = self.transport.lock().await;
-        transport.is_connected().await
+    /// Check if the client is connected to the server
+    pub fn is_connected(&self) -> bool {
+        // First ensure the client isn't shut down
+        if self.shutdown.load(Ordering::SeqCst) {
+            return false;
+        }
+
+        // Use the transport state directly without locking the transport
+        self.transport_state.borrow().is_connected()
     }
 
     /// Shutdown the client
     pub async fn shutdown(&self) -> Result<(), Error> {
-        debug!("Shutting down MCP client");
-
-        // Guard against multiple shutdown calls
-        {
-            let mut shutdown = self.shutdown.lock().await;
-            if *shutdown {
-                debug!("Client already shut down");
-                return Ok(());
-            }
-            *shutdown = true;
-        }
+        // Mark client as shutting down
+        self.shutdown.store(true, Ordering::Relaxed);
 
         // Notify the lifecycle manager that we're shutting down
-        if let Err(e) = self.lifecycle.transition_to(LifecycleState::Shutdown).await {
+        if
+            let Err(e) = self.service_provider
+                .lifecycle_manager()
+                .transition_to(LifecycleState::Shutdown).await
+        {
             warn!("Failed to update lifecycle state during shutdown: {}", e);
         }
 
-        // Cancel pending requests with a cancellation error
-        {
-            let mut pending = self.pending_requests.lock().await;
-            for (id, sender) in pending.drain() {
-                let _ = sender.send(
-                    Err(Error::Other(format!("Request {:?} cancelled due to client shutdown", id)))
-                );
-            }
-        }
+        // Cancel all pending requests
+        self.service_provider.request_manager().cancel_all_requests("Client shutting down").await;
 
         // Signal the message processing task to stop
         {
@@ -654,7 +687,11 @@ impl<T: DirectIOTransport + 'static> Client<T> {
         }
 
         // Update lifecycle state to shutdown
-        if let Err(e) = self.lifecycle.transition_to(LifecycleState::Shutdown).await {
+        if
+            let Err(e) = self.service_provider
+                .lifecycle_manager()
+                .transition_to(LifecycleState::Shutdown).await
+        {
             warn!("Failed to update lifecycle state to shutdown: {}", e);
         }
 
@@ -662,24 +699,38 @@ impl<T: DirectIOTransport + 'static> Client<T> {
         Ok(())
     }
 
-    /// Generate a request ID
-    fn generate_id(&self) -> RequestId {
-        let id = self.request_id_counter.fetch_add(1, Ordering::SeqCst);
-        RequestId::Number(id)
-    }
-
     /// Send a raw JSONRPCMessage without expecting a specific response type
     pub async fn send_raw_message(&self, message: JSONRPCMessage) -> Result<(), Error> {
-        // Check if the client is connected
-        if !self.is_connected().await {
+        // Quick shutdown check without locking
+        if self.shutdown.load(Ordering::Relaxed) {
+            error!("Cannot send message - client is shut down");
+            return Err(Error::Other("Client is shut down".to_string()));
+        }
+
+        // Check if the client is connected without acquiring the transport lock
+        if !self.is_connected() {
+            error!("Cannot send message - client not connected to server");
             return Err(Error::Transport("Not connected to server".to_string()));
         }
 
-        // Get a lock on the transport
-        let mut transport = self.transport.lock().await;
+        // Acquire transport lock as late as possible and for as short a time as possible
+        debug!("Acquiring transport lock to send message");
+        let result = {
+            let mut transport = self.transport.lock().await;
+            debug!("Transport lock acquired, sending message");
+            transport.send(&message).await
+        };
 
-        // Send the message
-        transport.send(&message).await
+        match result {
+            Ok(_) => {
+                debug!("Message sent successfully through transport");
+                Ok(())
+            }
+            Err(e) => {
+                error!("Failed to send message through transport: {}", e);
+                Err(e)
+            }
+        }
     }
 
     /// Send a high-level Message directly
@@ -727,9 +778,14 @@ impl<T: DirectIOTransport + 'static> Client<T> {
         // Send the message
         transport.send(&json_rpc_message).await
     }
+
+    /// Subscribe to connection status updates
+    pub fn subscribe_status(&self) -> broadcast::Receiver<ConnectionStatus> {
+        self.status_tx.subscribe()
+    }
 }
 
-impl<T: DirectIOTransport + 'static> Drop for Client<T> {
+impl Drop for Client {
     fn drop(&mut self) {
         // When client is dropped, spawn a blocking task to ensure shutdown
         let client_clone = self.clone();
@@ -742,19 +798,17 @@ impl<T: DirectIOTransport + 'static> Drop for Client<T> {
 }
 
 // Allow cloning the client for use in async contexts
-impl<T: DirectIOTransport + 'static> Clone for Client<T> {
+impl Clone for Client {
     fn clone(&self) -> Self {
-        Self {
+        Client {
             transport: self.transport.clone(),
-            request_id_counter: AtomicI64::new(self.request_id_counter.load(Ordering::SeqCst)),
-            pending_requests: self.pending_requests.clone(),
-            notification_router: self.notification_router.clone(),
-            lifecycle: self.lifecycle.clone(),
-            request_manager: self.request_manager.clone(),
+            service_provider: self.service_provider.clone(),
             message_task: Mutex::new(None),
-            message_task_shutdown: Arc::new(Mutex::new(None)),
+            message_task_shutdown: self.message_task_shutdown.clone(),
             config: self.config.clone(),
             shutdown: self.shutdown.clone(),
+            status_tx: self.status_tx.clone(),
+            transport_state: self.transport_state.clone(),
         }
     }
 }

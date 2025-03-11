@@ -30,21 +30,17 @@ pub use services::{
     subscription::{ Subscription, SubscriptionManager },
 };
 
-use crate::client::transport::{ BoxedDirectIOTransport, DirectIOTransport, sse::SseTransport };
+use crate::client::transport::{ Transport, sse::SseTransport };
 use crate::protocol::Error;
 
 /// Connect to an MCP server using the provided transport
-pub async fn connect<T: DirectIOTransport + 'static>(
-    transport: T,
+pub async fn connect(
+    transport: Box<dyn Transport + 'static>,
     client_name: Option<String>,
     client_version: Option<String>
 ) -> Result<ClientSession, Error> {
-    // Box the transport
-    let boxed_transport = Box::new(transport);
-
     // Create a builder with the transport
-    let boxed_transport = BoxedDirectIOTransport(boxed_transport);
-    let mut builder = ClientSessionBuilder::new(boxed_transport);
+    let mut builder = ClientSessionBuilder::new(transport);
 
     // Set client info if provided
     if let Some(name) = client_name {
@@ -89,7 +85,7 @@ pub async fn connect_sse(
     let transport = SseTransport::new(url).await?;
 
     // Connect using the transport
-    connect(transport, client_name, client_version).await
+    connect(Box::new(transport), client_name, client_version).await
 }
 
 /// Connect to an MCP server using WebSocket transport

@@ -9,8 +9,7 @@ use std::sync::Arc;
 
 use crate::client::client::Client;
 use crate::client::services::ServiceProvider;
-use crate::client::transport::DirectIOTransport;
-use crate::protocol::{Error, GetPromptResult, ListPromptsResult};
+use crate::protocol::{ Error, GetPromptResult, ListPromptsResult };
 
 /// Handler trait for prompt operations
 #[async_trait]
@@ -22,22 +21,22 @@ pub trait PromptHandler: Send + Sync {
     async fn get_prompt(
         &self,
         name: &str,
-        arguments: Option<HashMap<String, Value>>,
+        arguments: Option<HashMap<String, Value>>
     ) -> Result<GetPromptResult, Error>;
 }
 
 /// Default implementation of the prompt handler
-pub struct DefaultPromptHandler<T: DirectIOTransport + 'static> {
+pub struct DefaultPromptHandler {
     /// The underlying client
-    client: Arc<Client<T>>,
+    client: Arc<Client>,
 
     /// Service provider for accessing services
     service_provider: Arc<ServiceProvider>,
 }
 
-impl<T: DirectIOTransport + 'static> DefaultPromptHandler<T> {
+impl DefaultPromptHandler {
     /// Create a new prompt handler
-    pub fn new(client: Arc<Client<T>>, service_provider: Arc<ServiceProvider>) -> Self {
+    pub fn new(client: Arc<Client>, service_provider: Arc<ServiceProvider>) -> Self {
         Self {
             client,
             service_provider,
@@ -46,22 +45,18 @@ impl<T: DirectIOTransport + 'static> DefaultPromptHandler<T> {
 }
 
 #[async_trait]
-impl<T: DirectIOTransport + 'static> PromptHandler for DefaultPromptHandler<T> {
+impl PromptHandler for DefaultPromptHandler {
     async fn list_prompts(&self) -> Result<ListPromptsResult, Error> {
         // Implementation will be completed in a subsequent PR
-        Err(Error::Other(
-            "Not implemented in this handler yet".to_string(),
-        ))
+        Err(Error::Other("Not implemented in this handler yet".to_string()))
     }
 
     async fn get_prompt(
         &self,
         name: &str,
-        arguments: Option<HashMap<String, Value>>,
+        arguments: Option<HashMap<String, Value>>
     ) -> Result<GetPromptResult, Error> {
         // Implementation will be completed in a subsequent PR
-        Err(Error::Other(
-            "Not implemented in this handler yet".to_string(),
-        ))
+        Err(Error::Other("Not implemented in this handler yet".to_string()))
     }
 }

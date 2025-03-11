@@ -6,6 +6,7 @@ use mcp_rs::client::clientsession::{ ClientSession, ClientSessionConfig };
 use mcp_rs::client::transport::sse::SseTransport;
 use mcp_rs::protocol::{ Error, Implementation, ServerCapabilities };
 use tracing::Level;
+use mcp_rs::client::transport::ConnectionStatus;
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
@@ -31,6 +32,17 @@ async fn main() -> Result<(), Error> {
     // Initialize the session (performs capability negotiation)
     println!("Initializing session with server...");
     let init_result = session.initialize().await?;
+
+    // Subscribe to connection status updates
+    let mut status_rx = session.subscribe_status();
+
+    // Spawn a task to monitor connection status changes
+    tokio::spawn(async move {
+        println!("Monitoring connection status...");
+        while let Ok(status) = status_rx.recv().await {
+            println!("Connection status changed: {:?}", status);
+        }
+    });
 
     // Display server information
     println!(
