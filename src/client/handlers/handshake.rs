@@ -5,14 +5,23 @@
 
 use async_trait::async_trait;
 use std::sync::Arc;
+use log::error;
 
 use crate::client::client::Client;
 use crate::client::services::ServiceProvider;
 use crate::client::transport::DirectIOTransport;
 use crate::protocol::{
-    ClientCapabilities, Error, Implementation, InitializeParams, InitializeResult, JSONRPCMessage,
-    JSONRPCNotification, Method, PROTOCOL_VERSION,
+    ClientCapabilities,
+    Error,
+    Implementation,
+    InitializeParams,
+    InitializeResult,
+    JSONRPCMessage,
+    JSONRPCNotification,
+    Method,
+    PROTOCOL_VERSION,
 };
+use crate::client::services::lifecycle::LifecycleState;
 
 /// Handler trait for core protocol operations
 #[async_trait]
@@ -49,13 +58,28 @@ impl<T: DirectIOTransport + 'static> DefaultHandshakeHandler<T> {
     }
 }
 
+// Function to compare protocol versions
+fn is_compatible_version(client_version: &str, server_version: &str) -> bool {
+    // For simplicity, we consider versions compatible if they are exactly the same
+    // In a more sophisticated implementation, we might handle major.minor.patch versioning
+    // or have a list of compatible versions
+    client_version == server_version
+}
+
 #[async_trait]
 impl<T: DirectIOTransport + 'static> HandshakeHandler for DefaultHandshakeHandler<T> {
     async fn initialize(&self) -> Result<InitializeResult, Error> {
-        // Get the lifecycle manager
         let lifecycle = self.service_provider.lifecycle_manager();
 
-        // Create the initialize params
+        // Can only initialize once
+        if lifecycle.current_state().await != LifecycleState::Initialization {
+            return Err(Error::Lifecycle("Client is already initialized".to_string()));
+        }
+
+        // Transition to Initializing state
+        lifecycle.transition_to(LifecycleState::Initialization).await?;
+
+        // Create initialize parameters
         let params = InitializeParams {
             protocol_version: PROTOCOL_VERSION.to_string(),
             client_info: Implementation {
@@ -72,11 +96,32 @@ impl<T: DirectIOTransport + 'static> HandshakeHandler for DefaultHandshakeHandle
         // Send the initialize request
         let result: InitializeResult = self.client.send_request(Method::Initialize, params).await?;
 
-        // Update the lifecycle manager with the server info
+        // Verify protocol version compatibility
+        if !is_compatible_version(&PROTOCOL_VERSION, &result.protocol_version) {
+            // Log the incompatibility
+            error!(
+                "Protocol version mismatch: client={}, server={}",
+                PROTOCOL_VERSION,
+                result.protocol_version
+            );
+
+            // Return a protocol error
+            return Err(
+                Error::Protocol(
+                    format!(
+                        "Incompatible protocol version: client supports {}, server requires {}",
+                        PROTOCOL_VERSION,
+                        result.protocol_version
+                    )
+                )
+            );
+        }
+
+        // Store the result for future reference
         lifecycle.set_server_info(result.clone()).await?;
 
-        // Send the initialized notification
-        self.send_initialized().await?;
+        // Update state to ServerInitialized
+        lifecycle.transition_to(LifecycleState::Initialization).await?;
 
         Ok(result)
     }
@@ -97,9 +142,9 @@ impl<T: DirectIOTransport + 'static> HandshakeHandler for DefaultHandshakeHandle
         self.client.send_raw_message(message).await?;
 
         // Update the lifecycle state
-        lifecycle
-            .transition_to(crate::client::services::lifecycle::LifecycleState::Ready)
-            .await?;
+        lifecycle.transition_to(
+            crate::client::services::lifecycle::LifecycleState::Operation
+        ).await?;
 
         Ok(())
     }
@@ -117,17 +162,12 @@ impl<T: DirectIOTransport + 'static> HandshakeHandler for DefaultHandshakeHandle
         let lifecycle = self.service_provider.lifecycle_manager();
 
         // Update the lifecycle state
-        lifecycle
-            .transition_to(crate::client::services::lifecycle::LifecycleState::ShuttingDown)
-            .await?;
+        lifecycle.transition_to(
+            crate::client::services::lifecycle::LifecycleState::Shutdown
+        ).await?;
 
         // Send the shutdown request
         // let _: serde_json::Value = self.client.send_request(Method::Close, ()).await?;
-
-        // Update the lifecycle state
-        lifecycle
-            .transition_to(crate::client::services::lifecycle::LifecycleState::Closed)
-            .await?;
 
         // Shutdown the client
         self.client.shutdown().await

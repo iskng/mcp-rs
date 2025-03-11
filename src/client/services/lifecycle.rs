@@ -8,29 +8,20 @@ use std::collections::HashSet;
 use tokio::sync::RwLock;
 use tracing::debug;
 
-use crate::protocol::{Error, Method};
-use crate::protocol::{InitializeResult, JSONRPCMessage, JSONRPCNotification};
+use crate::protocol::{ Error, Method };
+use crate::protocol::{ InitializeResult, JSONRPCMessage, JSONRPCNotification };
 
 /// Represents the different states in the MCP protocol lifecycle
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LifecycleState {
-    /// Initial state before any communication
-    Created,
+    /// Client is in the initialization phase
+    Initialization,
 
-    /// Client has sent initialize request, waiting for server response
-    Initializing,
+    /// Client is in normal operation mode
+    Operation,
 
-    /// Server has responded to initialize, but client hasn't sent initialized notification
-    ServerInitialized,
-
-    /// Client has sent initialized notification, ready for normal operations
-    Ready,
-
-    /// Client is in the process of shutting down
-    ShuttingDown,
-
-    /// Connection is closed
-    Closed,
+    /// Client is in the process of shutting down or closed
+    Shutdown,
 
     /// An error has occurred
     Error(String),
@@ -52,7 +43,7 @@ impl LifecycleManager {
     /// Create a new lifecycle manager
     pub fn new() -> Self {
         Self {
-            state: RwLock::new(LifecycleState::Created),
+            state: RwLock::new(LifecycleState::Initialization),
             server_info: RwLock::new(None),
             capabilities: RwLock::new(HashSet::new()),
         }
@@ -65,7 +56,7 @@ impl LifecycleManager {
 
     /// Check if the client is in the ready state
     pub async fn is_ready(&self) -> bool {
-        *self.state.read().await == LifecycleState::Ready
+        *self.state.read().await == LifecycleState::Operation
     }
 
     /// Transition to a new state
@@ -74,64 +65,40 @@ impl LifecycleManager {
 
         // Validate the state transition
         match (&*state, &new_state) {
-            // Valid transitions from Created
-            (LifecycleState::Created, LifecycleState::Initializing) => {
-                debug!("Transitioning from Created to Initializing");
+            // Valid transitions from Initialization
+            (LifecycleState::Initialization, LifecycleState::Operation) => {
+                debug!("Transitioning from Initialization to Operation");
+                *state = new_state;
+                Ok(())
+            }
+            (LifecycleState::Initialization, LifecycleState::Error(_)) => {
+                debug!("Transitioning from Initialization to Error");
                 *state = new_state;
                 Ok(())
             }
 
-            // Valid transitions from Initializing
-            (LifecycleState::Initializing, LifecycleState::ServerInitialized) => {
-                debug!("Transitioning from Initializing to ServerInitialized");
+            // Valid transitions from Operation
+            (LifecycleState::Operation, LifecycleState::Shutdown) => {
+                debug!("Transitioning from Operation to Shutdown");
                 *state = new_state;
                 Ok(())
             }
-            (LifecycleState::Initializing, LifecycleState::Error(_)) => {
-                debug!("Transitioning from Initializing to Error");
-                *state = new_state;
-                Ok(())
-            }
-
-            // Valid transitions from ServerInitialized
-            (LifecycleState::ServerInitialized, LifecycleState::Ready) => {
-                debug!("Transitioning from ServerInitialized to Ready");
-                *state = new_state;
-                Ok(())
-            }
-            (LifecycleState::ServerInitialized, LifecycleState::Error(_)) => {
-                debug!("Transitioning from ServerInitialized to Error");
+            (LifecycleState::Operation, LifecycleState::Error(_)) => {
+                debug!("Transitioning from Operation to Error");
                 *state = new_state;
                 Ok(())
             }
 
-            // Valid transitions from Ready
-            (LifecycleState::Ready, LifecycleState::ShuttingDown) => {
-                debug!("Transitioning from Ready to ShuttingDown");
-                *state = new_state;
-                Ok(())
-            }
-            (LifecycleState::Ready, LifecycleState::Error(_)) => {
-                debug!("Transitioning from Ready to Error");
+            // Valid transitions from Shutdown
+            (LifecycleState::Shutdown, LifecycleState::Error(_)) => {
+                debug!("Transitioning from Shutdown to Error");
                 *state = new_state;
                 Ok(())
             }
 
-            // Valid transitions from ShuttingDown
-            (LifecycleState::ShuttingDown, LifecycleState::Closed) => {
-                debug!("Transitioning from ShuttingDown to Closed");
-                *state = new_state;
-                Ok(())
-            }
-            (LifecycleState::ShuttingDown, LifecycleState::Error(_)) => {
-                debug!("Transitioning from ShuttingDown to Error");
-                *state = new_state;
-                Ok(())
-            }
-
-            // Error state can always transition to Closed
-            (LifecycleState::Error(_), LifecycleState::Closed) => {
-                debug!("Transitioning from Error to Closed");
+            // Error state can always transition to Shutdown
+            (LifecycleState::Error(_), LifecycleState::Shutdown) => {
+                debug!("Transitioning from Error to Shutdown");
                 *state = new_state;
                 Ok(())
             }
@@ -144,10 +111,12 @@ impl LifecycleManager {
             }
 
             // Invalid transitions
-            _ => Err(Error::Lifecycle(format!(
-                "Invalid state transition from {:?} to {:?}",
-                *state, new_state
-            ))),
+            _ =>
+                Err(
+                    Error::Lifecycle(
+                        format!("Invalid state transition from {:?} to {:?}", *state, new_state)
+                    )
+                ),
         }
     }
 
@@ -218,53 +187,57 @@ impl LifecycleManager {
         let state = self.state.read().await;
 
         match *state {
-            LifecycleState::Ready => Ok(()),
-            LifecycleState::Error(ref msg) => Err(Error::Lifecycle(format!(
-                "Cannot perform {} - client is in error state: {}",
-                operation, msg
-            ))),
-            LifecycleState::Closed => Err(Error::Lifecycle(format!(
-                "Cannot perform {} - client is closed",
-                operation
-            ))),
-            _ => Err(Error::Lifecycle(format!(
-                "Cannot perform {} - client is not ready (state: {:?})",
-                operation, *state
-            ))),
+            LifecycleState::Operation => Ok(()),
+            LifecycleState::Error(ref msg) =>
+                Err(
+                    Error::Lifecycle(
+                        format!("Cannot perform {} - client is in error state: {}", operation, msg)
+                    )
+                ),
+            LifecycleState::Shutdown =>
+                Err(Error::Lifecycle(format!("Cannot perform {} - client is closed", operation))),
+            _ =>
+                Err(
+                    Error::Lifecycle(
+                        format!(
+                            "Cannot perform {} - client is not ready (state: {:?})",
+                            operation,
+                            *state
+                        )
+                    )
+                ),
         }
     }
 
     /// Validate if a request is allowed in the current state
     pub async fn validate_request(&self, method: &Method) -> Result<(), Error> {
-        // Special case for initialize which is allowed in Created state
+        // Special case for initialize which is allowed in Initialization state
         if method == &Method::Initialize {
             let state = self.state.read().await;
-            if *state == LifecycleState::Created {
+            if *state == LifecycleState::Initialization {
                 return Ok(());
             }
         }
 
         // For other methods, client must be ready
-        self.validate_operation(&format!("request {}", method))
-            .await
+        self.validate_operation(&format!("request {}", method)).await
     }
 
     /// Validate if a notification is allowed in the current state
     pub async fn validate_notification(&self, method: &Method) -> Result<(), Error> {
-        // Special case for initialized notification which is allowed in ServerInitialized state
+        // Special case for initialized notification which is allowed in Initialization state
         if method == &Method::NotificationsInitialized {
             let state = self.state.read().await;
-            if *state == LifecycleState::ServerInitialized {
+            if *state == LifecycleState::Initialization {
                 return Ok(());
             }
         }
 
-        // For other notifications, client must be ready
-        self.validate_operation(&format!("notification {}", method))
-            .await
+        // For all other notifications, validate like regular operations
+        self.validate_operation("notification").await
     }
 
-    /// Create an initialized notification message
+    /// Create the initialized notification
     pub fn create_initialized_notification() -> JSONRPCMessage {
         JSONRPCMessage::Notification(JSONRPCNotification {
             jsonrpc: "2.0".to_string(),
@@ -276,6 +249,158 @@ impl LifecycleManager {
     /// Set the client to error state with a message
     pub async fn set_error_state(&self, message: String) -> Result<(), Error> {
         self.transition_to(LifecycleState::Error(message)).await
+    }
+
+    /// Validates if a capability is supported based on server capabilities
+    pub async fn validate_capability(
+        &self,
+        category: &str,
+        capability: Option<&str>
+    ) -> Result<(), Error> {
+        // Get the current state and server info
+        let state = self.current_state().await;
+
+        // Can only validate capabilities in Operation state
+        if state != LifecycleState::Operation {
+            return Err(
+                Error::Protocol(
+                    format!(
+                        "Cannot validate capabilities in {:?} state, client must be Ready",
+                        state
+                    )
+                )
+            );
+        }
+
+        // Get server info
+        let server_info_guard = self.server_info.read().await;
+        let server_info = match server_info_guard.as_ref() {
+            Some(info) => info,
+            None => {
+                return Err(
+                    Error::Protocol("Server info not available, client not initialized".to_string())
+                );
+            }
+        };
+
+        // Get the capabilities
+        let capabilities = &server_info.capabilities;
+
+        // Check if the capability category exists
+        let category_supported = match category {
+            "prompts" => capabilities.prompts.is_some(),
+            "resources" => capabilities.resources.is_some(),
+            "tools" => capabilities.tools.is_some(),
+            "logging" => capabilities.logging.is_some(),
+            "experimental" => capabilities.experimental.is_some(),
+            _ => false,
+        };
+
+        if !category_supported {
+            return Err(Error::Protocol(format!("Server does not support {} capability", category)));
+        }
+
+        // If a specific capability is requested, check that too
+        if let Some(specific) = capability {
+            let specific_supported = match (category, specific) {
+                ("resources", "subscribe") =>
+                    capabilities.resources
+                        .as_ref()
+                        .and_then(|r| r.subscribe)
+                        .unwrap_or(false),
+                ("resources", "listChanged") =>
+                    capabilities.resources
+                        .as_ref()
+                        .and_then(|r| r.list_changed)
+                        .unwrap_or(false),
+                ("prompts", "listChanged") =>
+                    capabilities.prompts
+                        .as_ref()
+                        .and_then(|p| p.list_changed)
+                        .unwrap_or(false),
+                ("tools", "listChanged") =>
+                    capabilities.tools
+                        .as_ref()
+                        .and_then(|t| t.list_changed)
+                        .unwrap_or(false),
+                _ => false,
+            };
+
+            if !specific_supported {
+                return Err(
+                    Error::Protocol(
+                        format!("Server does not support {}/{} capability", category, specific)
+                    )
+                );
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Validates if an operation is allowed based on method and current state
+    pub async fn validate_method(&self, method: &Method) -> Result<(), Error> {
+        let current_state = self.current_state().await;
+        tracing::info!("Validating method {} in state {:?}", method, current_state);
+
+        // Special case for Initialize method
+        match method {
+            Method::Initialize => {
+                match current_state {
+                    LifecycleState::Initialization => {
+                        tracing::debug!("Initialize method allowed in state {:?}", current_state);
+                        return Ok(());
+                    }
+                    _ => {
+                        let msg = format!(
+                            "Invalid state for Initialize method: {:?}. Must be Initialization.",
+                            current_state
+                        );
+                        tracing::warn!("{}", msg);
+                        return Err(Error::Protocol(msg));
+                    }
+                }
+            }
+            Method::NotificationsInitialized => {
+                match current_state {
+                    LifecycleState::Initialization => {
+                        tracing::debug!(
+                            "NotificationsInitialized allowed in state {:?}",
+                            current_state
+                        );
+                        return Ok(());
+                    }
+                    _ => {
+                        let msg = format!(
+                            "Invalid state for NotificationsInitialized: {:?}. Must be Initialization.",
+                            current_state
+                        );
+                        tracing::warn!("{}", msg);
+                        return Err(Error::Protocol(msg));
+                    }
+                }
+            }
+            // Ping is always allowed
+            Method::Ping => {
+                tracing::debug!("Ping allowed in any state");
+                return Ok(());
+            }
+            // All other methods require Ready state
+            _ => {
+                if current_state == LifecycleState::Operation {
+                    tracing::debug!("Method {} allowed in state Ready", method);
+                    return Ok(());
+                } else {
+                    let msg = format!(
+                        "Invalid state for method {}: {:?}. Must be Ready.",
+                        method,
+                        current_state
+                    );
+                    tracing::warn!("{}", msg);
+                    return Err(Error::Protocol(msg));
+                }
+            }
+        }
     }
 }
 

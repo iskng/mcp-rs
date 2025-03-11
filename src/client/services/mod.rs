@@ -9,6 +9,8 @@ pub mod progress;
 pub mod request;
 pub mod service_provider;
 pub mod subscription;
+pub mod tools;
+pub mod resources;
 
 // Re-export the main service types
 pub use lifecycle::LifecycleManager;

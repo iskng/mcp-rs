@@ -8,11 +8,9 @@ use std::time::Duration;
 
 use crate::client::clientsession::ClientSession;
 use crate::client::services::notification::NotificationRouter;
-use crate::client::transport::BoxedDirectIOTransport;
 use crate::client::transport::DirectIOTransport;
 use crate::protocol::{
-    ClientCapabilities, Error, Implementation, InitializeParams, InitializeResult, JSONRPCMessage,
-    JSONRPCNotification, JSONRPCRequest, JSONRPCResponse, RequestId, ServerCapabilities,
+    Error, Implementation, InitializeResult, JSONRPCMessage, JSONRPCResponse, RequestId, ServerCapabilities,
 };
 
 // Reuse the MockTransport from client_tests (we would need to refactor to share this)

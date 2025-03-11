@@ -11,7 +11,7 @@ use std::time::Duration;
 use crate::client::client::Client;
 use crate::client::services::ServiceProvider;
 use crate::client::transport::DirectIOTransport;
-use crate::protocol::{CallToolParams, CallToolResult, Error, ListToolsResult};
+use crate::protocol::{ CallToolParams, CallToolResult, Error, ListToolsResult };
 
 /// Handler trait for tool operations
 #[async_trait]
@@ -25,22 +25,22 @@ pub trait ToolHandler: Send + Sync {
     /// Find a tool by name
     async fn find_tool_by_name(
         &self,
-        name: &str,
-    ) -> Result<crate::client::domain::tools::ToolInfo, Error>;
+        name: &str
+    ) -> Result<crate::client::services::tools::ToolInfo, Error>;
 
     /// Call a tool and wait for its completion
     async fn call_tool_and_wait(
         &self,
         name: &str,
         args: Value,
-        timeout: Option<Duration>,
+        timeout: Option<Duration>
     ) -> Result<CallToolResult, Error>;
 
     /// Call a tool with string arguments
     async fn call_tool_with_string_args(
         &self,
         name: &str,
-        args: HashMap<String, String>,
+        args: HashMap<String, String>
     ) -> Result<CallToolResult, Error>;
 
     /// Call a tool by name
@@ -70,44 +70,36 @@ impl<T: DirectIOTransport + 'static> DefaultToolHandler<T> {
 impl<T: DirectIOTransport + 'static> ToolHandler for DefaultToolHandler<T> {
     async fn list_tools(&self) -> Result<ListToolsResult, Error> {
         // Implementation will be completed in a subsequent PR
-        Err(Error::Other(
-            "Not implemented in this handler yet".to_string(),
-        ))
+        Err(Error::Other("Not implemented in this handler yet".to_string()))
     }
 
     async fn call_tool(&self, params: CallToolParams) -> Result<CallToolResult, Error> {
         // Implementation will be completed in a subsequent PR
-        Err(Error::Other(
-            "Not implemented in this handler yet".to_string(),
-        ))
+        Err(Error::Other("Not implemented in this handler yet".to_string()))
     }
 
     async fn find_tool_by_name(
         &self,
-        name: &str,
-    ) -> Result<crate::client::domain::tools::ToolInfo, Error> {
+        name: &str
+    ) -> Result<crate::client::services::tools::ToolInfo, Error> {
         // Implementation will be completed in a subsequent PR
-        Err(Error::Other(
-            "Not implemented in this handler yet".to_string(),
-        ))
+        Err(Error::Other("Not implemented in this handler yet".to_string()))
     }
 
     async fn call_tool_and_wait(
         &self,
         name: &str,
         args: Value,
-        timeout: Option<Duration>,
+        timeout: Option<Duration>
     ) -> Result<CallToolResult, Error> {
         // Implementation will be completed in a subsequent PR
-        Err(Error::Other(
-            "Not implemented in this handler yet".to_string(),
-        ))
+        Err(Error::Other("Not implemented in this handler yet".to_string()))
     }
 
     async fn call_tool_with_string_args(
         &self,
         name: &str,
-        args: HashMap<String, String>,
+        args: HashMap<String, String>
     ) -> Result<CallToolResult, Error> {
         // Create a JSON value object from the string args
         let mut args_value = serde_json::Map::new();
@@ -116,8 +108,7 @@ impl<T: DirectIOTransport + 'static> ToolHandler for DefaultToolHandler<T> {
         }
 
         // Call the tool with the args
-        self.call_tool_and_wait(name, Value::Object(args_value), None)
-            .await
+        self.call_tool_and_wait(name, Value::Object(args_value), None).await
     }
 
     async fn call_tool_by_name(&self, name: &str, args: Value) -> Result<CallToolResult, Error> {

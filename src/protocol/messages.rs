@@ -1,7 +1,7 @@
 //! Helper functions for working with JSON-RPC messages
 
 use serde::de::Error as DeError;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::{Map, Value};
 use std::collections::HashMap;
 use std::fmt;
@@ -12,7 +12,7 @@ use crate::protocol::{
     Result as ProtocolResult,
 };
 
-use crate::protocol::method::{Method, method_as_string};
+use crate::protocol::method::Method;
 
 use super::{
     ClientNotification, ClientRequest, ClientResult, ServerNotification, ServerRequest,

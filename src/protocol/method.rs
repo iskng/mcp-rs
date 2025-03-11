@@ -2,8 +2,8 @@
 //! This module provides structured representation of all methods defined in the protocol.
 
 use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
-use std::fmt::{self, Display};
+use serde::{ Deserialize, Serialize };
+use std::fmt::{ self, Display };
 
 /// Represents the methods defined in the Model Context Protocol (MCP).
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Hash)]
@@ -40,6 +40,18 @@ pub enum Method {
     /// Read a specific resource
     #[serde(rename = "resources/read")]
     ResourcesRead,
+
+    /// Create a resource
+    #[serde(rename = "resources/create")]
+    ResourcesCreate,
+
+    /// Update a resource
+    #[serde(rename = "resources/update")]
+    ResourcesUpdate,
+
+    /// Delete a resource
+    #[serde(rename = "resources/delete")]
+    ResourcesDelete,
 
     /// Subscribe to resource updates
     #[serde(rename = "resources/subscribe")]
@@ -122,6 +134,9 @@ impl Method {
             Method::ResourcesList => "resources/list",
             Method::ResourcesTemplatesList => "resources/templates/list",
             Method::ResourcesRead => "resources/read",
+            Method::ResourcesCreate => "resources/create",
+            Method::ResourcesUpdate => "resources/update",
+            Method::ResourcesDelete => "resources/delete",
             Method::ResourcesSubscribe => "resources/subscribe",
             Method::ResourcesUnsubscribe => "resources/unsubscribe",
             Method::NotificationsResourcesListChanged => "notifications/resources/list_changed",
@@ -146,15 +161,15 @@ impl Method {
     pub fn is_notification(&self) -> bool {
         matches!(
             self,
-            Method::NotificationsInitialized
-                | Method::NotificationsCancelled
-                | Method::NotificationsProgress
-                | Method::NotificationsResourcesListChanged
-                | Method::NotificationsResourcesUpdated
-                | Method::NotificationsPromptsListChanged
-                | Method::NotificationsToolsListChanged
-                | Method::NotificationsLoggingMessage
-                | Method::NotificationsRootsListChanged
+            Method::NotificationsInitialized |
+                Method::NotificationsCancelled |
+                Method::NotificationsProgress |
+                Method::NotificationsResourcesListChanged |
+                Method::NotificationsResourcesUpdated |
+                Method::NotificationsPromptsListChanged |
+                Method::NotificationsToolsListChanged |
+                Method::NotificationsLoggingMessage |
+                Method::NotificationsRootsListChanged
         )
     }
 
@@ -167,13 +182,16 @@ impl Method {
     pub fn is_resource_method(&self) -> bool {
         matches!(
             self,
-            Method::ResourcesList
-                | Method::ResourcesTemplatesList
-                | Method::ResourcesRead
-                | Method::ResourcesSubscribe
-                | Method::ResourcesUnsubscribe
-                | Method::NotificationsResourcesListChanged
-                | Method::NotificationsResourcesUpdated
+            Method::ResourcesList |
+                Method::ResourcesTemplatesList |
+                Method::ResourcesRead |
+                Method::ResourcesCreate |
+                Method::ResourcesUpdate |
+                Method::ResourcesDelete |
+                Method::ResourcesSubscribe |
+                Method::ResourcesUnsubscribe |
+                Method::NotificationsResourcesListChanged |
+                Method::NotificationsResourcesUpdated
         )
     }
 
@@ -195,28 +213,25 @@ impl Method {
 
     /// Check if this method is related to logging
     pub fn is_logging_method(&self) -> bool {
-        matches!(
-            self,
-            Method::LoggingSetLevel | Method::NotificationsLoggingMessage
-        )
+        matches!(self, Method::LoggingSetLevel | Method::NotificationsLoggingMessage)
     }
 
     /// Check if this method is related to roots
     pub fn is_roots_method(&self) -> bool {
-        matches!(
-            self,
-            Method::RootsList | Method::NotificationsRootsListChanged
-        )
+        matches!(self, Method::RootsList | Method::NotificationsRootsListChanged)
     }
 
     /// Determines if the method is client-to-server, server-to-client, or bidirectional
     pub fn direction(&self) -> MethodDirection {
         match self {
             // Client to server only
-            Method::Initialize
+            | Method::Initialize
             | Method::ResourcesList
             | Method::ResourcesTemplatesList
             | Method::ResourcesRead
+            | Method::ResourcesCreate
+            | Method::ResourcesUpdate
+            | Method::ResourcesDelete
             | Method::ResourcesSubscribe
             | Method::ResourcesUnsubscribe
             | Method::PromptsList
@@ -224,21 +239,21 @@ impl Method {
             | Method::ToolsList
             | Method::ToolsCall
             | Method::LoggingSetLevel
-            | Method::CompletionComplete
-            | Method::NotificationsInitialized
-            | Method::NotificationsRootsListChanged => MethodDirection::ClientToServer,
+            | Method::CompletionComplete => MethodDirection::ClientToServer,
 
             // Server to client only
-            Method::SamplingCreateMessage
+            | Method::SamplingCreateMessage
             | Method::RootsList
             | Method::NotificationsResourcesListChanged
             | Method::NotificationsResourcesUpdated
             | Method::NotificationsPromptsListChanged
             | Method::NotificationsToolsListChanged
-            | Method::NotificationsLoggingMessage => MethodDirection::ServerToClient,
+            | Method::NotificationsLoggingMessage
+            | Method::NotificationsRootsListChanged
+            | Method::NotificationsInitialized => MethodDirection::ServerToClient,
 
             // Bidirectional
-            Method::Ping
+            | Method::Ping
             | Method::NotificationsProgress
             | Method::NotificationsCancelled
             | Method::NotificationsAll => MethodDirection::Bidirectional,
@@ -288,6 +303,9 @@ impl std::str::FromStr for Method {
             "resources/list" => Ok(Method::ResourcesList),
             "resources/templates/list" => Ok(Method::ResourcesTemplatesList),
             "resources/read" => Ok(Method::ResourcesRead),
+            "resources/create" => Ok(Method::ResourcesCreate),
+            "resources/update" => Ok(Method::ResourcesUpdate),
+            "resources/delete" => Ok(Method::ResourcesDelete),
             "resources/subscribe" => Ok(Method::ResourcesSubscribe),
             "resources/unsubscribe" => Ok(Method::ResourcesUnsubscribe),
             "notifications/resources/list_changed" => Ok(Method::NotificationsResourcesListChanged),
@@ -313,18 +331,16 @@ impl std::str::FromStr for Method {
 /// inline string rather than a struct when used within other structures
 pub mod method_as_string {
     use super::Method;
-    use serde::{Deserialize, Deserializer, Serializer};
+    use serde::{ Deserialize, Deserializer, Serializer };
 
     pub fn serialize<S>(method: &Method, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
+        where S: Serializer
     {
         serializer.serialize_str(method.as_str())
     }
 
     pub fn deserialize<'de, D>(deserializer: D) -> Result<Method, D::Error>
-    where
-        D: Deserializer<'de>,
+        where D: Deserializer<'de>
     {
         let s = String::deserialize(deserializer)?;
         s.parse::<Method>().map_err(serde::de::Error::custom)
@@ -351,21 +367,16 @@ mod tests {
         let deserialized: Method = serde_json::from_str("\"initialize\"").unwrap();
         assert_eq!(deserialized, Method::Initialize);
 
-        let deserialized: Method =
-            serde_json::from_str("\"notifications/resources/list_changed\"").unwrap();
+        let deserialized: Method = serde_json
+            ::from_str("\"notifications/resources/list_changed\"")
+            .unwrap();
         assert_eq!(deserialized, Method::NotificationsResourcesListChanged);
     }
 
     #[test]
     fn test_direction() {
-        assert_eq!(
-            Method::Initialize.direction(),
-            MethodDirection::ClientToServer
-        );
-        assert_eq!(
-            Method::SamplingCreateMessage.direction(),
-            MethodDirection::ServerToClient
-        );
+        assert_eq!(Method::Initialize.direction(), MethodDirection::ClientToServer);
+        assert_eq!(Method::SamplingCreateMessage.direction(), MethodDirection::ServerToClient);
         assert_eq!(Method::Ping.direction(), MethodDirection::Bidirectional);
     }
 

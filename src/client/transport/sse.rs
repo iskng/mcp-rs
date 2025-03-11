@@ -6,20 +6,20 @@
 
 use async_trait::async_trait;
 use futures_util::stream::StreamExt;
-use log::{error, info};
-use reqwest::{Client as HttpClient, ClientBuilder, header};
+use log::{ error, info };
+use reqwest::{ Client as HttpClient, ClientBuilder, header };
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;
-use tokio::sync::{Mutex, mpsc, oneshot};
+use tokio::sync::{ Mutex, mpsc, oneshot };
 
 // Use both protocol types
 use crate::client::transport::DirectIOTransport;
 use crate::client::transport::Transport;
 use crate::protocol::Error;
 use crate::protocol::messages::Message; // Import the high-level Message type
-use crate::protocol::{JSONRPCMessage, RequestId};
+use crate::protocol::{ JSONRPCMessage, RequestId };
 use crate::server::server::AppState;
 
 /// Default timeout for HTTP requests
@@ -62,8 +62,8 @@ impl Default for SseOptions {
 pub struct SseTransport {
     /// Base URL for the SSE server
     base_url: String,
-    /// URL for the SSE events endpoint
-    events_url: String,
+    /// URL for the SSE endpoint
+    sse_url: String,
     /// URL for the messages endpoint
     messages_url: Arc<Mutex<String>>,
     /// HTTP client
@@ -92,18 +92,57 @@ impl SseTransport {
 
     /// Create a new SSE transport with custom options
     pub async fn with_options(base_url: &str, options: SseOptions) -> Result<Self, Error> {
+        // Save original URL for logging
+        let original_url = base_url;
+
+        // Check if the URL already points to an SSE endpoint
+        let already_has_sse_path =
+            original_url.ends_with("/sse") || original_url.ends_with("/sse/");
+
         // Normalize the base URL (ensure it ends with a slash)
-        let base_url = if base_url.ends_with('/') {
-            base_url.to_string()
+        let base_url = if original_url.ends_with('/') {
+            original_url.to_string()
         } else {
-            format!("{}/", base_url)
+            format!("{}/", original_url)
         };
 
-        // Construct the events URL from the base URL
-        let events_url = format!("{}events", base_url);
+        // Construct the SSE URL from the base URL
+        // If the URL already contained '/sse', use the normalized version to ensure it ends with a slash
+        let sse_url = if already_has_sse_path {
+            if original_url.ends_with("/sse") {
+                // Append slash for consistency
+                format!("{}/", original_url)
+            } else {
+                // Already has trailing slash
+                base_url.clone()
+            }
+        } else {
+            format!("{}sse", base_url)
+        };
+
+        // Construct the message endpoint URL from the base URL
+        let message_endpoint_path = if already_has_sse_path {
+            // If connecting to /sse, the message endpoint is at a sibling path /message
+            let base_without_sse = if original_url.ends_with("/sse") {
+                original_url.trim_end_matches("/sse").to_string()
+            } else {
+                original_url.trim_end_matches("/sse/").to_string()
+            };
+            format!("{}/message", base_without_sse)
+        } else {
+            format!("{}message", base_url)
+        };
+
+        tracing::debug!(
+            "SSE client URL processing: original='{}', has_sse_path={}, sse_url='{}', message_url='{}'",
+            original_url,
+            already_has_sse_path,
+            sse_url,
+            message_endpoint_path
+        );
 
         // Initial messages URL - this will be updated when we connect
-        let messages_url = Arc::new(Mutex::new(format!("{}message", base_url)));
+        let messages_url = Arc::new(Mutex::new(message_endpoint_path));
 
         // Create a default session ID
         let session_id = Arc::new(Mutex::new(String::new()));
@@ -120,6 +159,8 @@ impl SseTransport {
             .build()
             .map_err(|e| Error::Transport(format!("Failed to create HTTP client: {}", e)))?;
 
+        tracing::debug!("HTTP client configured with timeout: {:?}", options.timeout);
+
         // Create a channel for incoming messages
         let (tx, rx) = mpsc::channel(100);
 
@@ -128,7 +169,7 @@ impl SseTransport {
 
         // Spawn a background task to handle the SSE connection
         let http_client_clone = http_client.clone();
-        let events_url_clone = events_url.clone();
+        let sse_url_clone = sse_url.clone();
         let messages_url_clone = messages_url.clone();
         let session_id_clone = session_id.clone();
         let connected_clone = connected.clone();
@@ -146,16 +187,16 @@ impl SseTransport {
                 }
 
                 // Try to connect to the SSE endpoint
-                match Self::connect_to_sse(
-                    http_client_clone.clone(),
-                    events_url_clone.clone(),
-                    tx_clone.clone(),
-                    session_id_clone.clone(),
-                    connected_clone.clone(),
-                    is_ready_clone.clone(),
-                    messages_url_clone.clone(),
-                )
-                .await
+                match
+                    Self::connect_to_sse(
+                        http_client_clone.clone(),
+                        sse_url_clone.clone(),
+                        tx_clone.clone(),
+                        session_id_clone.clone(),
+                        connected_clone.clone(),
+                        is_ready_clone.clone(),
+                        messages_url_clone.clone()
+                    ).await
                 {
                     Ok(_) => {
                         tracing::info!("SSE connection ended normally");
@@ -185,7 +226,7 @@ impl SseTransport {
 
         Ok(Self {
             base_url: base_url.to_string(),
-            events_url,
+            sse_url,
             messages_url,
             http_client,
             rx,
@@ -201,26 +242,26 @@ impl SseTransport {
     /// Connect to the SSE endpoint and process messages
     async fn connect_to_sse(
         http_client: HttpClient,
-        events_url: String,
+        sse_url: String,
         sender: mpsc::Sender<JSONRPCMessage>,
         session_id: Arc<Mutex<String>>,
         connected: Arc<Mutex<bool>>,
         is_ready: Arc<AtomicBool>,
-        messages_url: Arc<Mutex<String>>,
+        messages_url: Arc<Mutex<String>>
     ) -> Result<(), Error> {
         let mut retries = 0;
         let max_retries = 5;
         let mut retry_delay = std::time::Duration::from_millis(1000);
 
         loop {
-            tracing::info!("Connecting to SSE endpoint: {}", events_url);
+            tracing::info!("Connecting to SSE endpoint: {}", sse_url);
 
             // Reset ready state on new connection attempt
             is_ready.store(false, std::sync::atomic::Ordering::Release);
 
             // Create a request with headers (no client ID - the server will assign one)
             let req = http_client
-                .get(&events_url)
+                .get(&sse_url)
                 .header("Accept", "text/event-stream")
                 .header("Cache-Control", "no-cache")
                 .header("Connection", "keep-alive")
@@ -230,11 +271,15 @@ impl SseTransport {
             // Send the request and check the response
             let response = match http_client.execute(req).await {
                 Ok(resp) => {
+                    tracing::info!("SSE connection response: {:?}", resp.status());
                     if !resp.status().is_success() {
                         let status = resp.status();
                         let text = resp.text().await.unwrap_or_default();
-                        let error =
-                            format!("SSE connection failed with status {}: {}", status, text);
+                        let error = format!(
+                            "SSE connection failed with status {}: {}",
+                            status,
+                            text
+                        );
                         tracing::error!("{}", error);
 
                         // Increase retries and delay before next attempt
@@ -250,8 +295,10 @@ impl SseTransport {
                             max_retries
                         );
                         tokio::time::sleep(retry_delay).await;
-                        retry_delay =
-                            std::cmp::min(retry_delay * 2, std::time::Duration::from_secs(30));
+                        retry_delay = std::cmp::min(
+                            retry_delay * 2,
+                            std::time::Duration::from_secs(30)
+                        );
                         continue;
                     }
                     resp
@@ -273,8 +320,10 @@ impl SseTransport {
                         max_retries
                     );
                     tokio::time::sleep(retry_delay).await;
-                    retry_delay =
-                        std::cmp::min(retry_delay * 2, std::time::Duration::from_secs(30));
+                    retry_delay = std::cmp::min(
+                        retry_delay * 2,
+                        std::time::Duration::from_secs(30)
+                    );
                     continue;
                 }
             };
@@ -284,14 +333,15 @@ impl SseTransport {
             tracing::info!("Successfully connected to SSE endpoint!");
 
             // Process the response stream
-            match Self::process_sse_stream(
-                response,
-                sender.clone(),
-                session_id.clone(),
-                is_ready.clone(),
-                messages_url.clone(),
-            )
-            .await
+            match
+                Self::process_sse_stream(
+                    response,
+                    sender.clone(),
+                    session_id.clone(),
+                    is_ready.clone(),
+                    messages_url.clone(),
+                    sse_url.clone()
+                ).await
             {
                 Ok(_) => {
                     tracing::info!("SSE stream processed successfully");
@@ -319,8 +369,10 @@ impl SseTransport {
                         max_retries
                     );
                     tokio::time::sleep(retry_delay).await;
-                    retry_delay =
-                        std::cmp::min(retry_delay * 2, std::time::Duration::from_secs(30));
+                    retry_delay = std::cmp::min(
+                        retry_delay * 2,
+                        std::time::Duration::from_secs(30)
+                    );
                 }
             }
         }
@@ -334,23 +386,27 @@ impl SseTransport {
         session_id: Arc<Mutex<String>>,
         is_ready: Arc<AtomicBool>,
         messages_url: Arc<Mutex<String>>,
+        sse_url: String
     ) -> Result<(), Error> {
         let mut stream = response.bytes_stream();
         let mut buffer = String::new();
         let mut event_type = String::new();
         let mut event_data = String::new();
 
-        tracing::debug!("Starting to process SSE stream");
+        tracing::info!("Starting to process SSE stream from {}", sse_url);
 
         while let Some(chunk_result) = stream.next().await {
             match chunk_result {
                 Ok(chunk) => {
                     // Convert bytes to string and append to buffer
-                    let chunk_str = std::str::from_utf8(&chunk).map_err(|e| {
-                        Error::Transport(format!("Invalid UTF-8 in SSE stream: {}", e))
-                    })?;
+                    let chunk_str = std::str
+                        ::from_utf8(&chunk)
+                        .map_err(|e| {
+                            Error::Transport(format!("Failed to decode UTF-8 from SSE: {}", e))
+                        })?;
 
                     buffer.push_str(chunk_str);
+                    tracing::debug!("Received {} bytes from SSE stream", chunk.len());
 
                     // Process complete lines in the buffer
                     let mut pos = 0;
@@ -359,30 +415,119 @@ impl SseTransport {
                         let line = buffer[pos..line_end].trim();
                         pos = line_end + 1;
 
-                        tracing::debug!("Received SSE line: {}", line);
+                        tracing::debug!("Received SSE line: '{}'", line);
 
                         if line.is_empty() {
                             // Empty line marks the end of an event
                             if !event_type.is_empty() && !event_data.is_empty() {
-                                tracing::debug!("Processing event type: {}", event_type);
+                                tracing::info!(
+                                    "Processing SSE event: {} = {}",
+                                    event_type,
+                                    event_data
+                                );
 
                                 // Handle different event types
                                 match event_type.as_str() {
                                     "endpoint" => {
-                                        // Server is providing the message endpoint URL
+                                        // Server is providing the message endpoint URL - typically a relative path
                                         tracing::info!("Received endpoint URL: {}", event_data);
+
+                                        // Extract the base URL from the current sse_url
+                                        let base_url = {
+                                            if let Some(last_slash_pos) = sse_url.rfind('/') {
+                                                // Remove everything after the last slash (including it if it's the trailing slash)
+                                                if last_slash_pos == sse_url.len() - 1 {
+                                                    // If the trailing character is a slash, find the previous one
+                                                    if
+                                                        let Some(second_last_slash) = sse_url[
+                                                            ..last_slash_pos
+                                                        ].rfind('/')
+                                                    {
+                                                        sse_url[..second_last_slash].to_string()
+                                                    } else {
+                                                        // Fallback if we can't find another slash
+                                                        sse_url[..last_slash_pos].to_string()
+                                                    }
+                                                } else {
+                                                    // No trailing slash, just remove the last path component
+                                                    sse_url[..last_slash_pos].to_string()
+                                                }
+                                            } else {
+                                                // No slash found, use the SSE URL as is
+                                                sse_url.clone()
+                                            }
+                                        };
+
+                                        // Handle both absolute and relative paths properly
+                                        let full_endpoint_url = if
+                                            event_data.starts_with("http://") ||
+                                            event_data.starts_with("https://")
+                                        {
+                                            // Absolute URL
+                                            event_data.clone()
+                                        } else {
+                                            // Relative path - ensure it starts with /
+                                            let path = if event_data.starts_with('/') {
+                                                event_data.clone()
+                                            } else {
+                                                format!("/{}", event_data)
+                                            };
+
+                                            // Combine base URL with path
+                                            format!("{}{}", base_url, path)
+                                        };
+
+                                        tracing::debug!(
+                                            "Using full message endpoint URL: {}",
+                                            full_endpoint_url
+                                        );
                                         let mut messages_url_guard = messages_url.lock().await;
-                                        *messages_url_guard = event_data.clone();
+                                        *messages_url_guard = full_endpoint_url;
                                     }
                                     "connected" => {
                                         tracing::info!(
                                             "Server confirmed connection: {}",
                                             event_data
                                         );
+
+                                        // Update the connection status atomically
                                         is_ready.store(true, std::sync::atomic::Ordering::Release);
+                                        tracing::info!("Set is_ready flag to true");
+
+                                        // Also make sure the message URL is available
+                                        let has_message_url = {
+                                            let url = messages_url.lock().await;
+                                            !url.is_empty()
+                                        };
+
+                                        if has_message_url {
+                                            tracing::info!(
+                                                "Transport is fully ready (connected and has message URL)"
+                                            );
+                                        } else {
+                                            tracing::warn!(
+                                                "Transport is connected but still waiting for message URL"
+                                            );
+                                        }
                                     }
                                     "message" => {
-                                        Self::process_message_event(&event_data, &sender).await?;
+                                        tracing::info!(
+                                            "Received message event with data: {}",
+                                            event_data
+                                        );
+                                        if
+                                            let Err(e) = Self::process_message_event(
+                                                &event_data,
+                                                &sender
+                                            ).await
+                                        {
+                                            tracing::error!(
+                                                "Error processing message event: {}",
+                                                e
+                                            );
+                                        } else {
+                                            tracing::debug!("Successfully processed message event");
+                                        }
                                     }
                                     "error" => {
                                         tracing::error!("Received error event: {}", event_data);
@@ -408,6 +553,10 @@ impl SseTransport {
                         } else if let Some(event) = line.strip_prefix("event:") {
                             // Set event type
                             event_type = event.trim().to_string();
+                        } else if !line.starts_with(':') {
+                            // Ignore comments
+                            // Unrecognized line format
+                            tracing::warn!("Received unrecognized SSE line format: {}", line);
                         }
                     }
 
@@ -430,24 +579,47 @@ impl SseTransport {
 
     async fn process_message_event(
         event_data: &str,
-        sender: &mpsc::Sender<JSONRPCMessage>,
+        sender: &mpsc::Sender<JSONRPCMessage>
     ) -> Result<(), Error> {
-        tracing::debug!("Processing message event: {}", event_data);
+        tracing::info!("Processing message event from SSE stream: {}", event_data);
 
         // Step 1: Parse raw JSON to JSONRPCMessage
         let message: JSONRPCMessage = match serde_json::from_str(event_data) {
-            Ok(msg) => msg,
+            Ok(msg) => {
+                // Log different types of messages differently
+                match &msg {
+                    JSONRPCMessage::Request(req) => {
+                        tracing::info!("Received request message with method: {}", req.method);
+                    }
+                    JSONRPCMessage::Response(res) => {
+                        tracing::info!("Received response message with id: {:?}", res.id);
+                    }
+                    JSONRPCMessage::Notification(notif) => {
+                        tracing::info!(
+                            "Received notification message with method: {}",
+                            notif.method
+                        );
+                    }
+                    JSONRPCMessage::Error(err) => {
+                        tracing::error!("Received error message: {:?}", err);
+                    }
+                }
+                msg
+            }
             Err(e) => {
                 tracing::error!("Failed to parse JSONRPCMessage: {}", e);
+                tracing::error!("Raw message data: {}", event_data);
                 return Err(Error::Transport(format!("Invalid JSON: {}", e)));
             }
         };
 
-        // Step 3: Send the Message to the channel
+        // Step 2: Send the Message to the channel for processing
+        tracing::debug!("Sending received message to the client's processing channel");
         if let Err(e) = sender.send(message).await {
             tracing::error!("Failed to send message to channel: {}", e);
             return Err(Error::Transport("Failed to send message".to_string()));
         }
+        tracing::info!("Successfully forwarded SSE message to client for processing");
 
         Ok(())
     }
@@ -457,7 +629,7 @@ impl SseTransport {
         event_type: &str,
         event_data: &str,
         sender: &mpsc::Sender<Message>,
-        pending_requests: &Arc<Mutex<HashMap<u64, oneshot::Sender<Result<Message, Error>>>>>,
+        pending_requests: &Arc<Mutex<HashMap<u64, oneshot::Sender<Result<Message, Error>>>>>
     ) -> Result<(), Error> {
         if event_type != "message" {
             return Ok(());
@@ -517,67 +689,187 @@ impl SseTransport {
 
 #[async_trait]
 impl Transport for SseTransport {
-    /// Start the transport - for the client this is a no-op as initialization
-    /// happens in the constructor
+    /// Start the transport
     async fn start(&mut self) -> Result<(), Error> {
-        // Check if we're already connected
-        let connected = *self.connected.lock().await;
-        if connected {
-            return Ok(());
-        }
+        // Wait for the connection to be fully established and ready
+        let start_time = std::time::Instant::now();
+        let timeout = self.options.timeout;
 
-        // Otherwise, just log that we're ready
-        tracing::info!("SSE transport ready");
-        Ok(())
+        // Try to wait until both connected and ready flags are set, or timeout
+        loop {
+            let connected = *self.connected.lock().await;
+            let ready = self.is_ready.load(std::sync::atomic::Ordering::Acquire);
+            let has_message_url = {
+                let url = self.messages_url.lock().await;
+                !url.is_empty()
+            };
+
+            if connected && ready && has_message_url {
+                tracing::info!("SSE transport started and ready with message endpoint available");
+                return Ok(());
+            }
+
+            if start_time.elapsed() >= timeout {
+                // Log which condition failed
+                if !connected {
+                    tracing::error!("Timed out waiting for SSE connection");
+                } else if !ready {
+                    tracing::error!("Timed out waiting for server to confirm connection readiness");
+                } else if !has_message_url {
+                    tracing::error!("Timed out waiting for server to provide message endpoint URL");
+                }
+
+                return Err(
+                    Error::Transport(
+                        "Failed to establish ready SSE connection within timeout".to_string()
+                    )
+                );
+            }
+
+            // Short sleep to avoid busy waiting
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
     }
 
     async fn send_to(&mut self, _client_id: &str, message: &JSONRPCMessage) -> Result<(), Error> {
         // Wait for the transport to be ready
+        info!("SEND_TO called");
         if !self.is_ready.load(std::sync::atomic::Ordering::Acquire) {
+            let connected = {
+                let connected_guard = self.connected.lock().await;
+                *connected_guard
+            };
+
+            let has_message_url = {
+                let url = self.messages_url.lock().await;
+                !url.is_empty()
+            };
+
+            tracing::warn!(
+                "Transport not ready for sending message. Status: connected={}, has_message_url={}, is_ready={}",
+                connected,
+                has_message_url,
+                false
+            );
             return Err(Error::Transport("Transport not ready".to_string()));
+        } else {
+            tracing::info!("Transport is ready for sending message");
+        }
+
+        // Log the ready state details
+        {
+            let connected = {
+                let connected_guard = self.connected.lock().await;
+                *connected_guard
+            };
+
+            let has_message_url = {
+                let url = self.messages_url.lock().await;
+                !url.is_empty()
+            };
+
+            tracing::debug!(
+                "Transport ready state: connected={}, has_message_url={}, is_ready={}",
+                connected,
+                has_message_url,
+                true
+            );
         }
 
         // Get the current messages URL
         let messages_url = {
             let url = self.messages_url.lock().await.clone();
             if url.is_empty() {
-                return Err(Error::Transport(
-                    "No message endpoint URL available".to_string(),
-                ));
+                tracing::error!("No message endpoint URL available");
+                return Err(Error::Transport("No message endpoint URL available".to_string()));
             }
+            tracing::info!("Sending message to URL: {}", url);
             url
         };
 
         // Serialize the message to JSON
-        let message_json = serde_json::to_string(message)
+        let message_json = serde_json
+            ::to_string(message)
             .map_err(|e| Error::Transport(format!("Failed to serialize message: {}", e)))?;
 
+        tracing::info!("Sending message: {}", message_json);
+
+        // Log the message type
+        match message {
+            JSONRPCMessage::Request(req) => {
+                tracing::info!("Sending request with method: {}, id: {:?}", req.method, req.id);
+            }
+            JSONRPCMessage::Response(res) => {
+                tracing::info!("Sending response with id: {:?}", res.id);
+            }
+            JSONRPCMessage::Notification(notif) => {
+                tracing::info!("Sending notification with method: {}", notif.method);
+            }
+            JSONRPCMessage::Error(err) => {
+                tracing::info!("Sending error: {:?}", err);
+            }
+        }
+
         // Send the message to the server via HTTP POST
-        let response = self
-            .http_client
+        tracing::debug!("Sending HTTP POST request to {}", messages_url);
+        let response = self.http_client
             .post(&messages_url)
             .header("Content-Type", "application/json")
             .body(message_json)
-            .send()
-            .await
+            .send().await
             .map_err(|e| Error::Transport(format!("Failed to send message: {}", e)))?;
 
         // Check if the response is successful
-        if !response.status().is_success() {
-            let status = response.status();
-            let text = response.text().await.unwrap_or_default();
-            return Err(Error::Transport(format!(
-                "Failed to send message, received status {}: {}",
-                status, text
-            )));
+        let status = response.status();
+        tracing::info!("Received HTTP response with status: {}", status);
+
+        if !status.is_success() {
+            let error_text = response.text().await.unwrap_or_default();
+            tracing::error!("Failed to send message, status {}: {}", status, error_text);
+            return Err(
+                Error::Transport(
+                    format!("Failed to send message, received status {}: {}", status, error_text)
+                )
+            );
         }
+
+        // Just log the status - don't try to read the response body
+        // In the SSE pattern, responses come through the SSE stream, not the HTTP response
+        tracing::info!("Message sent successfully with status: {}", status);
 
         Ok(())
     }
 
     async fn is_connected(&self) -> bool {
-        let connected = self.connected.lock().await;
-        *connected
+        // First check if the connected flag is set
+        let connected = {
+            let connected_guard = self.connected.lock().await;
+            *connected_guard
+        };
+
+        if !connected {
+            return false;
+        }
+
+        // Then check if the is_ready flag is set
+        let ready = self.is_ready.load(std::sync::atomic::Ordering::Acquire);
+        if !ready {
+            return false;
+        }
+
+        // Finally check if we have a valid message endpoint URL
+        let has_message_url = {
+            let url = self.messages_url.lock().await;
+            !url.is_empty()
+        };
+
+        if !has_message_url {
+            return false;
+        }
+
+        // All checks passed
+        tracing::debug!("SSE transport is fully connected and ready");
+        true
     }
 
     async fn close(&mut self) -> Result<(), Error> {

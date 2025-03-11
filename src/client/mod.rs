@@ -7,7 +7,6 @@
 // Export submodules
 pub mod client;
 pub mod clientsession;
-pub mod domain;
 pub mod handlers;
 pub mod model;
 pub mod services;
@@ -15,31 +14,30 @@ pub mod transport;
 pub mod utils;
 
 // Re-export key types for easier access
-pub use client::{Client, ClientBuilder, ClientConfig};
+pub use client::{ Client, ClientBuilder, ClientConfig };
 pub use clientsession::{
-    ClientSession, ClientSessionBuilder, ClientSessionConfig, ClientSessionGuard,
+    ClientSession,
+    ClientSessionBuilder,
+    ClientSessionConfig,
+    ClientSessionGuard,
 };
 pub use model::ClientInfo;
 pub use services::{
-    lifecycle::{LifecycleManager, LifecycleState},
+    lifecycle::{ LifecycleManager, LifecycleState },
     notification::NotificationRouter,
-    progress::{ProgressInfo, ProgressStatus, ProgressTracker},
+    progress::{ ProgressInfo, ProgressStatus, ProgressTracker },
     request::RequestManager,
-    subscription::{Subscription, SubscriptionManager},
+    subscription::{ Subscription, SubscriptionManager },
 };
 
-// Re-export domain traits for easier usage
-pub use domain::resources::ResourceOperations;
-pub use domain::tools::ToolOperations;
-
-use crate::client::transport::{BoxedDirectIOTransport, DirectIOTransport, sse::SseTransport};
+use crate::client::transport::{ BoxedDirectIOTransport, DirectIOTransport, sse::SseTransport };
 use crate::protocol::Error;
 
 /// Connect to an MCP server using the provided transport
 pub async fn connect<T: DirectIOTransport + 'static>(
     transport: T,
     client_name: Option<String>,
-    client_version: Option<String>,
+    client_version: Option<String>
 ) -> Result<ClientSession, Error> {
     // Box the transport
     let boxed_transport = Box::new(transport);
@@ -85,7 +83,7 @@ pub async fn connect_sse(
     url: &str,
     headers: Option<std::collections::HashMap<String, String>>,
     client_name: Option<String>,
-    client_version: Option<String>,
+    client_version: Option<String>
 ) -> Result<ClientSession, Error> {
     // Create SSE transport
     let transport = SseTransport::new(url).await?;

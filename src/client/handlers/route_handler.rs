@@ -6,9 +6,8 @@
 use async_trait::async_trait;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
-use std::sync::Arc;
 
-use crate::protocol::{Error, JSONRPCMessage, JSONRPCResponse, Method, RequestId};
+use crate::protocol::{Error, JSONRPCMessage, Method};
 
 /// Main handler trait for processing server messages
 #[async_trait]
