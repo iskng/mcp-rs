@@ -264,9 +264,14 @@ async fn test_python_sdk_compatibility() {
     // - client.tools.call(name, args)
     // We've implemented these as direct methods on ClientSession:
 
-    // Initialize (not fully implemented but API matches)
+    // Initialize - this should now succeed with our mock transport
     let init_result = session.initialize().await;
-    assert!(init_result.is_err()); // Not implemented yet
+    assert!(init_result.is_ok(), "Initialize should succeed with mock transport");
+
+    if let Ok(result) = init_result {
+        assert_eq!(result.server_info.name, "Test Server");
+        assert_eq!(result.protocol_version, "2024-11-05");
+    }
 
     // Resources operations
     let list_result = session.list_resources(None).await;

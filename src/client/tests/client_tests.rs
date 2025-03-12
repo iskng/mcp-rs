@@ -268,6 +268,13 @@ async fn test_client_send_request() {
     let client = Client::new(Box::new(transport), ClientConfig::default());
     client.start().await.expect("Failed to start client");
 
+    // Manually initialize the client lifecycle state to Operation
+    // This is needed because we can only transition from Operation to Shutdown
+    client
+        .lifecycle()
+        .transition_to(LifecycleState::Operation).await
+        .expect("Failed to transition state");
+
     // Send a request
     let request = JSONRPCRequest {
         jsonrpc: "2.0".to_string(),
@@ -327,8 +334,8 @@ async fn test_client_send_notification() {
 
 #[tokio::test]
 async fn test_client_notification_handler() {
-    // Create a mock transport with a notification
-    let transport = MockTransport::with_notification(&Method::Initialize);
+    // Create a mock transport with a notification for resources updated (not Initialize)
+    let transport = MockTransport::with_notification(&Method::NotificationsResourcesUpdated);
 
     // Create a client with the transport
     let client = Client::new(Box::new(transport), ClientConfig::default());
@@ -350,6 +357,13 @@ async fn test_client_notification_handler() {
 
     // Start the client to process messages
     client.start().await.expect("Failed to start client");
+
+    // Manually initialize the client lifecycle state to Operation
+    // This is needed because we can only transition from Operation to Shutdown
+    client
+        .lifecycle()
+        .transition_to(LifecycleState::Operation).await
+        .expect("Failed to transition state");
 
     // Wait for notification
     let received = timeout(Duration::from_secs(1), rx.recv()).await;
