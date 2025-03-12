@@ -210,6 +210,83 @@ class McpClient:
         except Exception as e:
             log.error(f"Error during cleanup: {e}")
     
+    async def list_prompts(self):
+        """List available prompts from the server."""
+        if not self.session:
+            log.error("Cannot list prompts - no active session")
+            return None
+        
+        try:
+            log.info("Listing available prompts...")
+            # First try the dedicated method
+            try:
+                prompts = await self.session.list_prompts()
+                return prompts
+            except AttributeError:
+                # Fallback to send_request if available
+                if hasattr(self.session, "send_request"):
+                    log.info("Using fallback method for listing prompts")
+                    prompts = await self.session.send_request("prompts/list")
+                    return prompts
+                elif hasattr(self.session, "send_jsonrpc"):
+                    log.info("Using JSON-RPC fallback for listing prompts")
+                    prompts = await self.session.send_jsonrpc("prompts/list")
+                    return prompts
+                else:
+                    raise AttributeError("No method available for listing prompts")
+        except AttributeError as e:
+            log.error(f"The MCP client library doesn't support prompts: {e}")
+            log.info("You may need to update your MCP Python library or check if prompts are supported")
+            if self.debug_mode:
+                traceback.print_exc()
+            return None
+        except Exception as e:
+            log.error(f"Error listing prompts: {e}")
+            if self.debug_mode:
+                traceback.print_exc()
+            return None
+    
+    async def get_prompt(self, name, arguments=None):
+        """Get a specific prompt with optional arguments."""
+        if not self.session:
+            log.error("Cannot get prompt - no active session")
+            return None
+        
+        try:
+            log.info(f"Getting prompt: {name}")
+            # First try the dedicated method
+            try:
+                prompt = await self.session.get_prompt(name, arguments)
+                return prompt
+            except AttributeError:
+                # Prepare parameters
+                params = {"name": name}
+                if arguments:
+                    params["arguments"] = arguments
+                
+                # Fallback to send_request if available
+                if hasattr(self.session, "send_request"):
+                    log.info("Using fallback method for getting prompt")
+                    prompt = await self.session.send_request("prompts/get", params)
+                    return prompt
+                elif hasattr(self.session, "send_jsonrpc"):
+                    log.info("Using JSON-RPC fallback for getting prompt")
+                    prompt = await self.session.send_jsonrpc("prompts/get", params)
+                    return prompt
+                else:
+                    raise AttributeError("No method available for getting prompts")
+        except AttributeError as e:
+            log.error(f"The MCP client library doesn't support getting prompts: {e}")
+            log.info("You may need to update your MCP Python library or check if prompts are supported")
+            if self.debug_mode:
+                traceback.print_exc()
+            return None
+        except Exception as e:
+            log.error(f"Error getting prompt {name}: {e}")
+            if self.debug_mode:
+                traceback.print_exc()
+            return None
+    
     async def run(self):
         """Run the client: connect, initialize, and interact with the server."""
         log.info(f"Starting MCP client")
@@ -228,6 +305,66 @@ class McpClient:
             
             # Create a task for receiving messages
             receive_task = asyncio.create_task(self.receive_messages())
+            
+            # List prompts
+            if not hasattr(self, 'skip_prompts') or not self.skip_prompts:
+                log.info("--- Listing Available Prompts ---")
+                prompts_result = await self.list_prompts()
+                if prompts_result:
+                    try:
+                        # Convert the Pydantic model to a serializable dict
+                        if hasattr(prompts_result, "model_dump"):
+                            prompts_dict = prompts_result.model_dump()
+                        elif hasattr(prompts_result, "dict"):
+                            prompts_dict = prompts_result.dict()
+                        else:
+                            # Manual conversion as last resort
+                            prompts_dict = {"prompts": []}
+                            if hasattr(prompts_result, "prompts"):
+                                for prompt in prompts_result.prompts:
+                                    if hasattr(prompt, "model_dump"):
+                                        prompts_dict["prompts"].append(prompt.model_dump())
+                                    elif hasattr(prompt, "dict"):
+                                        prompts_dict["prompts"].append(prompt.dict())
+                                    else:
+                                        prompts_dict["prompts"].append({
+                                            "name": prompt.name,
+                                            "description": getattr(prompt, "description", None),
+                                            "arguments": getattr(prompt, "arguments", [])
+                                        })
+                        
+                        log.info(f"Available prompts: {json.dumps(prompts_dict, indent=2)}")
+                        
+                        # Get and display a few specific prompts
+                        if prompts_dict and "prompts" in prompts_dict and prompts_dict["prompts"]:
+                            # Try to get the calculator-help prompt
+                            log.info("--- Getting 'calculator-help' Prompt ---")
+                            calculator_help = await self.get_prompt("calculator-help")
+                            if calculator_help:
+                                self.display_prompt_result(calculator_help)
+                            
+                            # Try to get the welcome prompt with an argument
+                            log.info("--- Getting 'welcome' Prompt with Arguments ---")
+                            welcome_args = {"name": "Python Client"}
+                            welcome = await self.get_prompt("welcome", welcome_args)
+                            if welcome:
+                                self.display_prompt_result(welcome)
+                                
+                            # Try to get another prompt if available
+                            if len(prompts_dict["prompts"]) > 2:
+                                third_prompt_name = prompts_dict["prompts"][2]["name"]
+                                log.info(f"--- Getting '{third_prompt_name}' Prompt ---")
+                                third_prompt = await self.get_prompt(third_prompt_name)
+                                if third_prompt:
+                                    self.display_prompt_result(third_prompt)
+                    except Exception as e:
+                        log.error(f"Error processing prompts: {e}")
+                        if self.debug_mode:
+                            traceback.print_exc()
+                else:
+                    log.warning("No prompts available or error retrieving prompts")
+            else:
+                log.info("Skipping prompts as requested")
             
             # List resources
             log.info("--- Listing Available Resources ---")
@@ -446,6 +583,55 @@ class McpClient:
                 traceback.print_exc()
         finally:
             await self.cleanup()
+            
+    def display_prompt_result(self, prompt_result):
+        """Helper method to display prompt results in a readable format."""
+        try:
+            # Try to get messages from the prompt result
+            messages = []
+            if hasattr(prompt_result, "messages"):
+                messages = prompt_result.messages
+            elif hasattr(prompt_result, "model_dump"):
+                result_dict = prompt_result.model_dump()
+                messages = result_dict.get("messages", [])
+            elif hasattr(prompt_result, "dict"):
+                result_dict = prompt_result.dict()
+                messages = result_dict.get("messages", [])
+                
+            if not messages:
+                log.warning("No messages found in prompt result")
+                return
+                
+            log.info(f"Prompt contains {len(messages)} messages:")
+            
+            # Display each message
+            for i, message in enumerate(messages):
+                role = message.role if hasattr(message, "role") else "unknown"
+                
+                # Handle different content types
+                content_text = None
+                if hasattr(message, "content"):
+                    content = message.content
+                    if hasattr(content, "text"):
+                        content_text = content.text
+                    elif isinstance(content, dict) and "text" in content:
+                        content_text = content["text"]
+                elif isinstance(message, dict):
+                    role = message.get("role", "unknown")
+                    content = message.get("content")
+                    if isinstance(content, dict) and "text" in content:
+                        content_text = content["text"]
+                
+                if content_text:
+                    log.info(f"  [{i+1}] {role}: {content_text}")
+                else:
+                    log.info(f"  [{i+1}] {role}: <non-text content>")
+        except Exception as e:
+            log.error(f"Error displaying prompt result: {e}")
+            if self.debug_mode:
+                traceback.print_exc()
+            # Fallback to raw output
+            log.info(f"Raw prompt result: {prompt_result}")
 
 async def main():
     """Main entry point."""
@@ -454,9 +640,12 @@ async def main():
                        help='MCP server URL (default: http://127.0.0.1:8090)')
     parser.add_argument('--debug', action='store_true',
                        help='Enable debug mode with verbose output')
+    parser.add_argument('--skip-prompts', action='store_true',
+                       help='Skip prompt-related operations if they cause errors')
     args = parser.parse_args()
     
     client = McpClient(args.server, args.debug)
+    client.skip_prompts = args.skip_prompts
     await client.run()
 
 if __name__ == "__main__":
