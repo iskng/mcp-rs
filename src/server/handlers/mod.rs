@@ -9,19 +9,23 @@ pub use route_handler::RouteHandler;
 
 // Specialized handlers
 mod handshake;
-pub use handshake::{DefaultHandshakeHandler, HandshakeHandler, PingResult};
+pub use handshake::{ DefaultHandshakeHandler, HandshakeHandler, PingResult };
 
 // Initialize handler
 mod initialize;
-pub use initialize::{DefaultInitializeHandler, InitializeHandler, InitializeHandlerBuilder};
+pub use initialize::{ DefaultInitializeHandler, InitializeHandler, InitializeHandlerBuilder };
 
 // Tool handlers
 mod tools;
-pub use tools::{DefaultToolHandler, ToolHandler};
+pub use tools::{ DefaultToolHandler, ToolHandler };
 
 // Resource handlers
 mod resources;
-pub use resources::{DefaultResourceHandler, ResourceHandler};
+pub use resources::{ DefaultResourceHandler, ResourceHandler };
+
+// Prompt handlers
+mod prompts;
+pub use prompts::PromptsHandler;
 
 // Composite implementation - concrete implementation
 pub mod composite;

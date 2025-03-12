@@ -5,8 +5,11 @@
 
 pub mod resources;
 pub mod tools;
+pub mod prompts;
+
 use crate::server::services::resources::ResourceRegistry;
 use crate::server::services::tools::ToolRegistry;
+use crate::server::services::prompts::PromptManager;
 use std::sync::Arc;
 
 /// Service provider for server handlers
@@ -17,15 +20,23 @@ pub struct ServiceProvider {
 
     /// Tool registry
     tool_registry: Arc<ToolRegistry>,
+
+    /// Prompt manager
+    prompt_manager: Arc<PromptManager>,
     // Additional services can be added here as needed
 }
 
 impl ServiceProvider {
     /// Create a new service provider
-    pub fn new(resource_registry: Arc<ResourceRegistry>, tool_registry: Arc<ToolRegistry>) -> Self {
+    pub fn new(
+        resource_registry: Arc<ResourceRegistry>,
+        tool_registry: Arc<ToolRegistry>,
+        prompt_manager: Arc<PromptManager>
+    ) -> Self {
         Self {
             resource_registry,
             tool_registry,
+            prompt_manager,
         }
     }
 
@@ -37,5 +48,10 @@ impl ServiceProvider {
     /// Get the tool registry
     pub fn tool_registry(&self) -> &ToolRegistry {
         &self.tool_registry
+    }
+
+    /// Get the prompt manager
+    pub fn prompt_manager(&self) -> &PromptManager {
+        &self.prompt_manager
     }
 }

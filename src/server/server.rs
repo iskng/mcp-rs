@@ -5,11 +5,16 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use tracing::{info, warn};
+use tracing::{ info, warn };
 
 use crate::protocol::errors::Error;
 use crate::protocol::{
-    Annotations, CallToolParams, CallToolResult, PROTOCOL_VERSION, ResourcesCapability, Tool,
+    Annotations,
+    CallToolParams,
+    CallToolResult,
+    PROTOCOL_VERSION,
+    ResourcesCapability,
+    Tool,
     ToolsCapability,
 };
 use crate::server::handlers::CompositeServerHandler;
@@ -17,11 +22,12 @@ use crate::server::handlers::RouteHandler;
 use crate::server::services::{
     ServiceProvider,
     resources::resource_registry::ResourceRegistry,
-    tools::tool_registry::{ExternalToolConfig, ToolRegistry},
+    tools::tool_registry::{ ExternalToolConfig, ToolRegistry },
+    prompts::{ PromptManager, Prompt },
 };
 // Not needed with the unified builder approach
 // use crate::transport::ServerHandle;
-use crate::server::transport::{Transport, middleware::ClientSessionStore};
+use crate::server::transport::{ Transport, middleware::ClientSessionStore };
 
 use super::handlers::InitializeHandlerBuilder;
 
@@ -49,7 +55,7 @@ impl AppState {
         auth_token: Option<String>,
         require_auth: bool,
         allowed_origins: Option<Vec<String>>,
-        route_handler: Arc<dyn RouteHandler + Send + Sync>,
+        route_handler: Arc<dyn RouteHandler + Send + Sync>
     ) -> Self {
         Self {
             auth_token,
@@ -82,9 +88,7 @@ impl Server {
     pub async fn start(&mut self) -> Result<(), Error> {
         // Check that we have a transport
         if self.transport.is_none() {
-            return Err(Error::Protocol(
-                "No transport configured for server".to_string(),
-            ));
+            return Err(Error::Protocol("No transport configured for server".to_string()));
         }
 
         // Get the transport
@@ -126,20 +130,17 @@ impl Server {
         command: String,
         args: Vec<String>,
         env: HashMap<String, String>,
-        annotations: Option<Annotations>,
+        annotations: Option<Annotations>
     ) -> Result<(), Error> {
         let service_provider = self.service_provider();
         let tool_registry = service_provider.tool_registry();
 
-        tool_registry
-            .register_external_tool(tool, command, args, env, annotations)
-            .await
+        tool_registry.register_external_tool(tool, command, args, env, annotations).await
     }
 
     /// Register an in-process tool
     pub async fn register_in_process_tool<F>(&self, tool: Tool, handler: F) -> Result<(), Error>
-    where
-        F: Fn(CallToolParams) -> Result<CallToolResult, Error> + Send + Sync + 'static,
+        where F: Fn(CallToolParams) -> Result<CallToolResult, Error> + Send + Sync + 'static
     {
         let service_provider = self.service_provider();
         let tool_registry = service_provider.tool_registry();
@@ -150,6 +151,17 @@ impl Server {
     /// Get the transport, if any
     pub fn transport(&mut self) -> Option<&mut Box<dyn Transport + Send + Sync>> {
         self.transport.as_mut()
+    }
+
+    /// Register a prompt
+    pub async fn register_prompt(
+        &self,
+        prompt: Arc<dyn Prompt + Send + Sync>
+    ) -> Result<(), Error> {
+        let service_provider = self.service_provider();
+        let prompt_manager = service_provider.prompt_manager();
+
+        prompt_manager.add_prompt(prompt).await
     }
 }
 
@@ -179,17 +191,22 @@ pub struct ServerBuilder {
     /// Tool registry
     tool_registry: Option<Arc<ToolRegistry>>,
 
+    /// Prompt manager
+    prompt_manager: Option<Arc<PromptManager>>,
+
     /// Server handler
     server_handler: Option<Arc<dyn RouteHandler>>,
 
     /// External tools to register during build
     external_tools: Vec<(Tool, ExternalToolConfig)>,
 
+    /// Prompts to register during build
+    prompts: Vec<Arc<dyn Prompt + Send + Sync>>,
+
     /// In-process tools to register during build
-    in_process_tools: Vec<(
-        Tool,
-        Arc<dyn (Fn(CallToolParams) -> Result<CallToolResult, Error>) + Send + Sync>,
-    )>,
+    in_process_tools: Vec<
+        (Tool, Arc<dyn (Fn(CallToolParams) -> Result<CallToolResult, Error>) + Send + Sync>)
+    >,
 
     /// Transport
     transport: Option<Box<dyn Transport + Send + Sync>>,
@@ -205,19 +222,21 @@ pub struct ServerBuilder {
 }
 
 impl ServerBuilder {
-    /// Create a new server builder
+    /// Create a new server builder with default options
     pub fn new() -> Self {
         Self {
             server_name: None,
             server_version: None,
-            protocol_version: Some(PROTOCOL_VERSION.to_string()),
+            protocol_version: None,
             resource_capabilities: None,
             tool_capabilities: None,
             resource_registry: None,
             tool_registry: None,
+            prompt_manager: None,
             server_handler: None,
             instructions: None,
             external_tools: Vec::new(),
+            prompts: Vec::new(),
             in_process_tools: Vec::new(),
             transport: None,
             auth_token: None,
@@ -274,6 +293,12 @@ impl ServerBuilder {
         self
     }
 
+    /// Set the prompt manager
+    pub fn with_prompt_manager(mut self, manager: Arc<PromptManager>) -> Self {
+        self.prompt_manager = Some(manager);
+        self
+    }
+
     /// Set the server handler
     pub fn with_server_handler(mut self, handler: Arc<dyn RouteHandler>) -> Self {
         self.server_handler = Some(handler);
@@ -288,17 +313,21 @@ impl ServerBuilder {
 
     /// Register an in-process tool to be added during build
     pub fn register_in_process_tool<F>(mut self, tool: Tool, handler: F) -> Self
-    where
-        F: Fn(CallToolParams) -> Result<CallToolResult, Error> + Send + Sync + 'static,
+        where F: Fn(CallToolParams) -> Result<CallToolResult, Error> + Send + Sync + 'static
     {
         self.in_process_tools.push((tool, Arc::new(handler)));
         self
     }
 
+    /// Register a prompt to be added during build
+    pub fn register_prompt(mut self, prompt: Arc<dyn Prompt + Send + Sync>) -> Self {
+        self.prompts.push(prompt);
+        self
+    }
+
     /// Add a transport to the builder
     pub fn with_transport<T>(mut self, transport: T) -> Self
-    where
-        T: Transport + Send + Sync + 'static,
+        where T: Transport + Send + Sync + 'static
     {
         self.transport = Some(Box::new(transport));
         self
@@ -312,19 +341,19 @@ impl ServerBuilder {
             None => {
                 let capabilities = match self.resource_capabilities.clone() {
                     Some(caps) => caps,
-                    None => ResourcesCapability {
-                        subscribe: Some(true),
-                        list_changed: Some(true),
-                    },
+                    None =>
+                        ResourcesCapability {
+                            subscribe: Some(true),
+                            list_changed: Some(true),
+                        },
                 };
-                info!(
-                    "Creating new resource registry in build: {:?}",
-                    capabilities
-                );
-                Arc::new(ResourceRegistry::new(
-                    capabilities.subscribe.unwrap_or(true),
-                    capabilities.list_changed.unwrap_or(true),
-                ))
+                info!("Creating new resource registry in build: {:?}", capabilities);
+                Arc::new(
+                    ResourceRegistry::new(
+                        capabilities.subscribe.unwrap_or(true),
+                        capabilities.list_changed.unwrap_or(true)
+                    )
+                )
             }
         };
 
@@ -334,17 +363,29 @@ impl ServerBuilder {
             None => {
                 let capabilities = match self.tool_capabilities.clone() {
                     Some(caps) => caps,
-                    None => ToolsCapability {
-                        list_changed: Some(true),
-                    },
+                    None =>
+                        ToolsCapability {
+                            list_changed: Some(true),
+                        },
                 };
                 info!("Creating new tool registry in build: {:?}", capabilities);
                 Arc::new(ToolRegistry::new(capabilities))
             }
         };
 
+        // Create prompt manager if not provided
+        let prompt_manager = match self.prompt_manager {
+            Some(manager) => manager,
+            None => {
+                info!("Creating new prompt manager in build");
+                Arc::new(PromptManager::new(true))
+            }
+        };
+
         // Create a service provider
-        let service_provider = Arc::new(ServiceProvider::new(resource_registry, tool_registry));
+        let service_provider = Arc::new(
+            ServiceProvider::new(resource_registry, tool_registry, prompt_manager)
+        );
 
         //  Create or use the provided server handler
         let route_handler = match self.server_handler {
@@ -353,24 +394,19 @@ impl ServerBuilder {
                 // Build an initialize handler with the builder's settings
                 let init_handler = InitializeHandlerBuilder::new(service_provider.clone())
                     // Pass all relevant fields from the ServerBuilder
-                    .with_server_name(
-                        self.server_name
-                            .unwrap_or_else(|| "Rust Server".to_string()),
-                    )
+                    .with_server_name(self.server_name.unwrap_or_else(|| "Rust Server".to_string()))
                     .with_server_version(
-                        self.server_version
-                            .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string()),
+                        self.server_version.unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string())
                     )
                     .with_protocol_version(
-                        self.protocol_version
-                            .unwrap_or_else(|| PROTOCOL_VERSION.to_string()),
+                        self.protocol_version.unwrap_or_else(|| PROTOCOL_VERSION.to_string())
                     );
 
                 // Apply resource capabilities if set
                 let init_handler = if let Some(caps) = self.resource_capabilities.clone() {
                     init_handler.with_resource_capabilities(
                         caps.list_changed.unwrap_or(true),
-                        caps.subscribe.unwrap_or(true),
+                        caps.subscribe.unwrap_or(true)
                     )
                 } else {
                     init_handler
@@ -391,20 +427,24 @@ impl ServerBuilder {
                 };
 
                 // Build the handler and create the composite handler
-                Arc::new(CompositeServerHandler::with_initialize_handler(
-                    service_provider.clone(),
-                    init_handler.build(),
-                ))
+                Arc::new(
+                    CompositeServerHandler::with_initialize_handler(
+                        service_provider.clone(),
+                        init_handler.build()
+                    )
+                )
             }
         };
 
         // Create app state
-        let app_state = Arc::new(AppState::new(
-            self.auth_token,
-            self.require_auth,
-            self.allowed_origins,
-            route_handler.clone(),
-        ));
+        let app_state = Arc::new(
+            AppState::new(
+                self.auth_token,
+                self.require_auth,
+                self.allowed_origins,
+                route_handler.clone()
+            )
+        );
         if let Some(transport) = self.transport.as_mut() {
             transport.set_app_state(app_state.clone()).await;
         }
@@ -424,21 +464,26 @@ impl ServerBuilder {
                     config.command,
                     config.args,
                     config.env,
-                    config.annotations,
-                )
-                .await?;
+                    config.annotations
+                ).await?;
         }
 
         for (tool, handler) in self.in_process_tools {
             tracing::info!("Registering in-process tool: {}", tool.name);
             // Register with the service provider's tool registry
-            let handler_fn =
-                move |params: CallToolParams| -> Result<CallToolResult, Error> { handler(params) };
-            service_provider
-                .tool_registry()
-                .register_in_process_tool(tool, handler_fn)
-                .await?;
+            let handler_fn = move |params: CallToolParams| -> Result<CallToolResult, Error> {
+                handler(params)
+            };
+            service_provider.tool_registry().register_in_process_tool(tool, handler_fn).await?;
             tracing::info!("Tool registration complete");
+        }
+
+        // Register any prompts provided during build
+        for prompt in self.prompts {
+            tracing::info!("Registering prompt: {}", prompt.get_name());
+            // Register with the service provider's prompt manager
+            service_provider.prompt_manager().add_prompt(prompt).await?;
+            tracing::info!("Prompt registration complete");
         }
 
         Ok(server)

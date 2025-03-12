@@ -2,7 +2,7 @@
 //!
 //! This module provides utility functions for working with MCP protocol errors.
 
-use crate::protocol::errors::{Error, error_codes};
+use crate::protocol::errors::{ Error, error_codes };
 
 /// Check if an error is a capability error
 pub fn is_capability_error(error: &Error) -> bool {
@@ -44,6 +44,9 @@ pub fn error_to_user_message(error: &Error) -> String {
         Error::ServerUnavailable(msg) => format!("Server unavailable: {}", msg),
         Error::InvalidState(msg) => format!("Invalid state: {}", msg),
         Error::Other(msg) => format!("Error: {}", msg),
+        Error::PromptNotFound(msg) => format!("Prompt not found: {}", msg),
+        Error::MissingArgument(msg) => format!("Missing argument: {}", msg),
+        Error::MissingArguments => format!("Missing arguments"),
     }
 }
 

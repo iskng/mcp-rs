@@ -4,11 +4,11 @@
 //! creating standardized JSON-RPC error responses.
 
 use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use serde::{ Deserialize, Serialize };
 use serde_json::Value;
 use thiserror::Error;
 
-use crate::protocol::{JSONRPCError, JSONRPCErrorDetails, JSONRPCMessage, RequestId};
+use crate::protocol::{ JSONRPCError, JSONRPCErrorDetails, JSONRPCMessage, RequestId };
 
 /// Standard JSON-RPC 2.0 error codes and MCP-specific error codes
 pub mod error_codes {
@@ -58,6 +58,10 @@ pub mod error_codes {
     pub const SERVER_UNAVAILABLE: i32 = -33014;
     /// Schema validation error
     pub const SCHEMA_VALIDATION_ERROR: i32 = -33015;
+    /// Missing argument for prompt
+    pub const MISSING_ARGUMENT: i32 = -33016;
+    /// Missing arguments for prompt
+    pub const MISSING_ARGUMENTS: i32 = -33017;
 }
 
 /// Error data for JSON-RPC responses
@@ -155,6 +159,18 @@ pub enum Error {
     #[error("Invalid state: {0}")]
     InvalidState(String),
 
+    /// Prompt not found
+    #[error("Prompt not found: {0}")]
+    PromptNotFound(String),
+
+    /// Missing argument for prompt
+    #[error("Missing argument: {0}")]
+    MissingArgument(String),
+
+    /// Missing arguments for prompt
+    #[error("Missing arguments")]
+    MissingArguments,
+
     /// Other errors
     #[error("{0}")]
     Other(String),
@@ -185,6 +201,9 @@ impl Error {
             Error::ServerUnavailable(_) => SERVER_UNAVAILABLE,
             Error::Io(_) => INTERNAL_ERROR,
             Error::Transport(_) => INTERNAL_ERROR,
+            Error::PromptNotFound(_) => PROMPT_NOT_FOUND,
+            Error::MissingArgument(_) => MISSING_ARGUMENT,
+            Error::MissingArguments => MISSING_ARGUMENTS,
             Error::Other(_) => INTERNAL_ERROR,
         }
     }
@@ -222,6 +241,9 @@ impl Clone for Error {
             Error::Initialization(s) => Error::Initialization(s.clone()),
             Error::ServerUnavailable(s) => Error::ServerUnavailable(s.clone()),
             Error::InvalidState(s) => Error::InvalidState(s.clone()),
+            Error::PromptNotFound(s) => Error::PromptNotFound(s.clone()),
+            Error::MissingArgument(s) => Error::MissingArgument(s.clone()),
+            Error::MissingArguments => Error::MissingArguments,
             Error::Other(s) => Error::Other(s.clone()),
         }
     }
@@ -232,7 +254,7 @@ pub fn create_error_response(
     id: RequestId,
     code: i32,
     message: &str,
-    data: Option<Value>,
+    data: Option<Value>
 ) -> JSONRPCError {
     JSONRPCError {
         jsonrpc: "2.0".to_string(),
@@ -285,7 +307,7 @@ pub fn tool_execution_error(id: RequestId, tool_name: &str, message: &str) -> JS
     standard_error_response(
         id,
         error_codes::TOOL_EXECUTION_ERROR,
-        &format!("Error executing tool '{}': {}", tool_name, message),
+        &format!("Error executing tool '{}': {}", tool_name, message)
     )
 }
 
@@ -294,7 +316,7 @@ pub fn resource_not_found_error(id: RequestId, uri: &str) -> JSONRPCError {
     standard_error_response(
         id,
         error_codes::RESOURCE_NOT_FOUND,
-        &format!("Resource not found: {}", uri),
+        &format!("Resource not found: {}", uri)
     )
 }
 
@@ -323,6 +345,9 @@ pub fn error_to_rpc_error(id: RequestId, error: &Error) -> JSONRPCError {
         Error::Initialization(msg) => internal_error(id.clone(), msg),
         Error::ServerUnavailable(msg) => internal_error(id.clone(), msg),
         Error::InvalidState(msg) => internal_error(id.clone(), msg),
+        Error::PromptNotFound(msg) => method_not_found(id.clone(), msg),
+        Error::MissingArgument(msg) => invalid_params(id.clone(), msg),
+        Error::MissingArguments => invalid_params(id.clone(), "Missing arguments"),
         Error::Other(msg) => internal_error(id.clone(), msg),
     }
 }
@@ -341,7 +366,7 @@ pub fn rpc_error_to_error(error: &JSONRPCError) -> Error {
         error_codes::RESOURCE_NOT_FOUND => Error::Resource(error.error.message.clone()),
         error_codes::TOOL_NOT_FOUND => Error::Tool(error.error.message.clone()),
         error_codes::TOOL_EXECUTION_ERROR => Error::Tool(error.error.message.clone()),
-        error_codes::PROMPT_NOT_FOUND => Error::Prompt(error.error.message.clone()),
+        error_codes::PROMPT_NOT_FOUND => Error::PromptNotFound(error.error.message.clone()),
         error_codes::PROMPT_VALIDATION_ERROR => Error::Validation(error.error.message.clone()),
         error_codes::AUTHENTICATION_ERROR => Error::Authentication(error.error.message.clone()),
         error_codes::AUTHORIZATION_ERROR => Error::Authorization(error.error.message.clone()),
@@ -363,9 +388,6 @@ pub fn rpc_error_to_error(error: &JSONRPCError) -> Error {
         _ if code >= error_codes::SERVER_ERROR_START && code <= error_codes::SERVER_ERROR_END => {
             Error::Protocol(error.error.message.clone())
         }
-        _ => Error::Other(format!(
-            "Unknown error code {}: {}",
-            code, error.error.message
-        )),
+        _ => Error::Other(format!("Unknown error code {}: {}", code, error.error.message)),
     }
 }
