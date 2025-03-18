@@ -1,12 +1,9 @@
-use std::sync::Arc;
 use std::time::Duration;
 
-use mcp_rs::client::client::{ Client, ClientConfig };
-use mcp_rs::client::clientsession::{ ClientSession, ClientSessionConfig };
+use mcp_rs::client::clientsession::ClientSession;
 use mcp_rs::client::transport::sse::SseTransport;
-use mcp_rs::protocol::{ Error, Implementation, ServerCapabilities };
+use mcp_rs::protocol::{ Error, ServerCapabilities };
 use tracing::Level;
-use mcp_rs::client::transport::ConnectionStatus;
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {

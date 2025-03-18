@@ -5,7 +5,7 @@ use std::sync::Arc;
 use tokio::signal;
 
 use mcp_rs::protocol::{ Error, Content, TextContent, PromptMessage, Role };
-use mcp_rs::server::services::prompts::{ Prompt, PromptArgument, PromptManager };
+use mcp_rs::server::services::prompts::{ Prompt, PromptArgument };
 use mcp_rs::server::transport::stdio::StdioTransport;
 use mcp_rs::server::Server;
 use mcp_rs::prompt;
@@ -79,7 +79,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt::init();
 
     // Create a server with a StdioTransport
-    let server = Server::builder()
+    let _server = Server::builder()
         .with_server_name("Prompt Example Server")
         .with_transport(StdioTransport::new())
         // Register our greeting prompt during build

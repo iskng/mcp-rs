@@ -1,4 +1,3 @@
-use mcp_rs::protocol::Tool;
 use mcp_rs::protocol::tools::ToToolSchema;
 use serde::{ Deserialize, Serialize };
 use tool_derive::Tool;
@@ -37,6 +36,7 @@ pub struct Metadata {
 // Define a Calculator struct that will be converted to a Tool
 #[derive(Tool, Debug, Clone)]
 #[tool(description = "Performs basic arithmetic")]
+#[allow(dead_code)]
 pub struct Calculator {
     #[param(description = "First operand", required = true)]
     a: i64,
@@ -55,6 +55,7 @@ pub struct Calculator {
 // Define a WeatherConverter struct that will be converted to a Tool
 #[derive(Tool, Debug, Clone)]
 #[tool(description = "Converts temperature between units")]
+#[allow(dead_code)]
 pub struct WeatherConverter {
     #[param(description = "Temperature value", required = true)]
     temperature: f64,
@@ -66,6 +67,7 @@ pub struct WeatherConverter {
 // Define a FormatCalculator struct that will be converted to a Tool
 #[derive(Tool, Debug, Clone)]
 #[tool(description = "Performs basic arithmetic with formatting")]
+#[allow(dead_code)]
 pub struct FormatCalculator {
     #[param(description = "First operand", required = true)]
     a: i64,
@@ -87,6 +89,7 @@ pub struct FormatCalculator {
 // A struct with optional parameters
 #[derive(Tool, Debug, Clone)]
 #[tool(description = "Formats a greeting")]
+#[allow(dead_code)]
 pub struct Greeter {
     #[param(description = "Name to greet", required = true)]
     name: String,

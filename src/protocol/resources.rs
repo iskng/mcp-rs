@@ -312,6 +312,7 @@ impl FileResource {
 /// A URI template for parameterized resources
 pub struct UriTemplate {
     /// The template string
+    #[allow(dead_code)]
     template: String,
     /// Parsed segments
     segments: Vec<UriTemplateSegment>,

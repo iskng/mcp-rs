@@ -91,7 +91,7 @@ pub fn validate_request(request: &JSONRPCRequest, config: &ValidationConfig) -> 
 /// Validate a response message
 pub fn validate_response(
     response: &JSONRPCResponse,
-    method: &Method,
+    _method: &Method,
     config: &ValidationConfig
 ) -> Result<(), Error> {
     // Basic validations

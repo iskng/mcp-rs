@@ -48,9 +48,9 @@ impl MockTransport {
     }
 
     /// Create a new transport with a prefilled response
-    fn with_response(method: &str, id: RequestId) -> Self {
+    fn with_response(_method: &str, id: RequestId) -> Self {
         // Create a transport first
-        let transport = Self::new();
+        let _transport = Self::new();
 
         // Create the response
         let response = JSONRPCResponse {
@@ -147,7 +147,7 @@ impl crate::client::transport::Transport for MockTransport {
         &self
     ) -> tokio::sync::broadcast::Receiver<crate::client::transport::ConnectionStatus> {
         // Create a new channel each time since we don't need to track subscribers in tests
-        let (tx, rx) = tokio::sync::broadcast::channel(1);
+        let (_tx, rx) = tokio::sync::broadcast::channel(1);
         rx
     }
 
