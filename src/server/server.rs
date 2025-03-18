@@ -335,6 +335,18 @@ impl ServerBuilder {
 
     /// Build the server with the configured options
     pub async fn build(mut self) -> Result<Server, Error> {
+        // Initialize schema validation - do this first
+        info!("Initializing schema validation");
+        if let Err(e) = crate::protocol::validation::init_full_schema() {
+            warn!("Failed to initialize schema validation: {}", e);
+            // Continue without schema validation, rather than failing
+        }
+
+        // Set defaults if not provided
+        if self.protocol_version.is_none() {
+            self.protocol_version = Some(PROTOCOL_VERSION.to_string());
+        }
+
         // Create resource registry if not provided
         let resource_registry = match self.resource_registry {
             Some(registry) => registry,

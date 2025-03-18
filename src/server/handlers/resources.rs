@@ -8,9 +8,16 @@ use std::sync::Arc;
 
 use crate::protocol::Error;
 use crate::protocol::{
-    ListResourceTemplatesRequest, ListResourceTemplatesResult, ListResourcesRequest,
-    ListResourcesResult, PaginatedRequestParams, ReadResourceRequest, ReadResourceResult,
-    RootsListChangedNotification, SubscribeRequest, UnsubscribeRequest,
+    ListResourceTemplatesRequest,
+    ListResourceTemplatesResult,
+    ListResourcesRequest,
+    ListResourcesResult,
+    PaginatedRequestParams,
+    ReadResourceRequest,
+    ReadResourceResult,
+    RootsListChangedNotification,
+    SubscribeRequest,
+    UnsubscribeRequest,
 };
 use crate::server::services::ServiceProvider;
 use crate::server::transport::middleware::ClientSession;
@@ -22,42 +29,42 @@ pub trait ResourceHandler: Send + Sync {
     async fn handle_list_resources(
         &self,
         request: &ListResourcesRequest,
-        session: &ClientSession,
+        session: &ClientSession
     ) -> Result<ListResourcesResult, Error>;
 
     /// Handle read resource request
     async fn handle_read_resource(
         &self,
         request: &ReadResourceRequest,
-        session: &ClientSession,
+        session: &ClientSession
     ) -> Result<ReadResourceResult, Error>;
 
     /// Handle list resource templates request
     async fn handle_list_templates(
         &self,
         request: &ListResourceTemplatesRequest,
-        session: &ClientSession,
+        session: &ClientSession
     ) -> Result<ListResourceTemplatesResult, Error>;
 
     /// Handle subscribe request
     async fn handle_subscribe(
         &self,
         request: &SubscribeRequest,
-        session: &ClientSession,
+        session: &ClientSession
     ) -> Result<(), Error>;
 
     /// Handle unsubscribe request
     async fn handle_unsubscribe(
         &self,
         request: &UnsubscribeRequest,
-        session: &ClientSession,
+        session: &ClientSession
     ) -> Result<(), Error>;
 
     /// Handle roots list changed notification
     async fn handle_roots_list_changed(
         &self,
         notification: &RootsListChangedNotification,
-        session: &ClientSession,
+        session: &ClientSession
     ) -> Result<(), Error>;
 }
 
@@ -79,7 +86,7 @@ impl ResourceHandler for DefaultResourceHandler {
     async fn handle_list_resources(
         &self,
         request: &ListResourcesRequest,
-        session: &ClientSession,
+        session: &ClientSession
     ) -> Result<ListResourcesResult, Error> {
         // Log the request
         if let Some(id) = &session.client_id {
@@ -89,10 +96,7 @@ impl ResourceHandler for DefaultResourceHandler {
         }
 
         // Extract parameters from the optional params
-        let params = request
-            .params
-            .as_ref()
-            .unwrap_or(&(PaginatedRequestParams { cursor: None }));
+        let params = request.params.as_ref().unwrap_or(&(PaginatedRequestParams { cursor: None }));
 
         // Get the resource registry from the service provider
         let resource_registry = self.service_provider.resource_registry();
@@ -104,7 +108,7 @@ impl ResourceHandler for DefaultResourceHandler {
     async fn handle_read_resource(
         &self,
         request: &ReadResourceRequest,
-        session: &ClientSession,
+        session: &ClientSession
     ) -> Result<ReadResourceResult, Error> {
         // Log the request
         if let Some(id) = &session.client_id {
@@ -128,7 +132,7 @@ impl ResourceHandler for DefaultResourceHandler {
     async fn handle_list_templates(
         &self,
         request: &ListResourceTemplatesRequest,
-        session: &ClientSession,
+        session: &ClientSession
     ) -> Result<ListResourceTemplatesResult, Error> {
         // Log the request
         if let Some(id) = &session.client_id {
@@ -137,10 +141,7 @@ impl ResourceHandler for DefaultResourceHandler {
             tracing::debug!("List templates request from unknown client");
         }
 
-        let params = request
-            .params
-            .as_ref()
-            .unwrap_or(&(PaginatedRequestParams { cursor: None }));
+        let params = request.params.as_ref().unwrap_or(&(PaginatedRequestParams { cursor: None }));
         // Get the resource registry from the service provider
         let resource_registry = self.service_provider.resource_registry();
 
@@ -151,11 +152,10 @@ impl ResourceHandler for DefaultResourceHandler {
     async fn handle_subscribe(
         &self,
         request: &SubscribeRequest,
-        session: &ClientSession,
+        session: &ClientSession
     ) -> Result<(), Error> {
         // Require a client ID for subscriptions
-        let client_id = session
-            .client_id
+        let client_id = session.client_id
             .as_ref()
             .ok_or_else(|| Error::Resource("Missing client ID".into()))?;
 
@@ -166,19 +166,16 @@ impl ResourceHandler for DefaultResourceHandler {
         let resource_registry = self.service_provider.resource_registry();
 
         // Call the resource registry
-        resource_registry
-            .subscribe(client_id, &request.params.uri)
-            .await
+        resource_registry.subscribe(client_id, &request.params.uri).await
     }
 
     async fn handle_unsubscribe(
         &self,
         request: &UnsubscribeRequest,
-        session: &ClientSession,
+        session: &ClientSession
     ) -> Result<(), Error> {
         // Require a client ID for unsubscribing
-        let client_id = session
-            .client_id
+        let client_id = session.client_id
             .as_ref()
             .ok_or_else(|| Error::Resource("Missing client ID".into()))?;
 
@@ -189,15 +186,13 @@ impl ResourceHandler for DefaultResourceHandler {
         let resource_registry = self.service_provider.resource_registry();
 
         // Call the resource registry
-        resource_registry
-            .unsubscribe(client_id, &request.params.uri)
-            .await
+        resource_registry.unsubscribe(client_id, &request.params.uri).await
     }
 
     async fn handle_roots_list_changed(
         &self,
-        notification: &RootsListChangedNotification,
-        session: &ClientSession,
+        _notification: &RootsListChangedNotification,
+        session: &ClientSession
     ) -> Result<(), Error> {
         // Log the notification
         if let Some(id) = &session.client_id {

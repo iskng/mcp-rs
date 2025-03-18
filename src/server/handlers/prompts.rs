@@ -2,9 +2,9 @@ use async_trait::async_trait;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tracing::{ debug, error };
+use tracing::debug;
 
-use crate::protocol::{ Error, JSONRPCMessage, Message, Method, RequestId };
+use crate::protocol::{ Error, JSONRPCMessage, Message, RequestId };
 use crate::protocol::{
     GetPromptParams,
     GetPromptResult,

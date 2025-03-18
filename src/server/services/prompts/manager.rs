@@ -3,11 +3,9 @@ use tokio::sync::RwLock;
 use std::collections::HashMap;
 use serde_json::Value;
 use tracing::{ debug, warn };
-use async_trait::async_trait;
 
 use crate::protocol::{ Error, PromptMessage };
 use super::base::{ Prompt, PromptArgument };
-use crate::prompt;
 
 /// Manager for prompt templates
 pub struct PromptManager {
@@ -134,5 +132,3 @@ impl PromptManager {
         self.add_prompt(prompt).await
     }
 }
-
-use crate::protocol::Message;

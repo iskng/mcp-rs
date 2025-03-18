@@ -1,10 +1,10 @@
 use crate::protocol::Error;
-use crate::protocol::{Annotations, CallToolParams, CallToolResult, Content, TextContent, Tool};
-use crate::protocol::{Role, ToolsCapability};
+use crate::protocol::{ Annotations, CallToolParams, CallToolResult, Content, TextContent, Tool };
+use crate::protocol::{ Role, ToolsCapability, Cursor };
 use crate::server::services::tools::process_manager::ToolProcessManager;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::{ Mutex, mpsc };
 use tracing::info;
 
 use super::process_manager::ToolOutput;
@@ -46,7 +46,10 @@ pub enum ToolDefinition {
         annotations: Option<Annotations>,
     },
     /// In-process tool executed directly
-    InProcess { tool: Tool, handler: ToolHandler },
+    InProcess {
+        tool: Tool,
+        handler: ToolHandler,
+    },
 }
 
 impl ToolDefinition {
@@ -85,7 +88,7 @@ impl ToolRegistry {
         command: String,
         args: Vec<String>,
         env: HashMap<String, String>,
-        annotations: Option<Annotations>,
+        annotations: Option<Annotations>
     ) -> Result<(), Error> {
         let name = tool.name.clone();
         let mut tools = self.tools.lock().await;
@@ -95,16 +98,13 @@ impl ToolRegistry {
             return Err(Error::Tool(format!("Tool already exists: {}", name)));
         }
 
-        tools.insert(
-            name,
-            ToolDefinition::External {
-                tool,
-                command,
-                args,
-                env,
-                annotations,
-            },
-        );
+        tools.insert(name, ToolDefinition::External {
+            tool,
+            command,
+            args,
+            env,
+            annotations,
+        });
         Ok(())
     }
 
@@ -112,51 +112,87 @@ impl ToolRegistry {
     pub async fn register_external_tool_with_config(
         &self,
         tool: Tool,
-        config: ExternalToolConfig,
+        config: ExternalToolConfig
     ) -> Result<(), Error> {
         self.register_external_tool(
             tool,
             config.command,
             config.args,
             config.env,
-            config.annotations,
-        )
-        .await
+            config.annotations
+        ).await
     }
 
     /// Register an in-process tool with a function handler
     pub async fn register_in_process_tool(
         &self,
         tool: Tool,
-        handler: impl (Fn(CallToolParams) -> Result<CallToolResult, Error>) + Send + Sync + 'static,
+        handler: impl (Fn(CallToolParams) -> Result<CallToolResult, Error>) + Send + Sync + 'static
     ) -> Result<(), Error> {
         let mut tools = self.tools.lock().await;
 
         // Store the tool definition with its handler
-        tools.insert(
-            tool.name.clone(),
-            ToolDefinition::InProcess {
-                tool,
-                handler: Arc::new(handler),
-            },
-        );
+        tools.insert(tool.name.clone(), ToolDefinition::InProcess {
+            tool,
+            handler: Arc::new(handler),
+        });
 
         Ok(())
     }
 
-    pub async fn list_tools(&self) -> Vec<Tool> {
+    pub async fn list_tools(
+        &self,
+        cursor: Option<&Cursor>,
+        limit: Option<usize>
+    ) -> (Vec<Tool>, Option<Cursor>) {
         let tools = self.tools.lock().await;
         info!(
             "LISTING TOOLS CALLED: Available tools in registry: {}",
             tools.keys().cloned().collect::<Vec<String>>().join(", ")
         );
-        tools.values().map(|def| def.get_tool().clone()).collect()
+
+        let all_tools: Vec<Tool> = tools
+            .values()
+            .map(|def| def.get_tool().clone())
+            .collect();
+
+        // If no cursor, start from the beginning
+        let start_index = if let Some(cursor) = cursor {
+            // Parse the cursor as an index
+            cursor.0.parse::<usize>().unwrap_or(0)
+        } else {
+            0
+        };
+
+        // Apply pagination
+        let end_index = if let Some(limit) = limit {
+            std::cmp::min(start_index + limit, all_tools.len())
+        } else {
+            all_tools.len()
+        };
+
+        // Get the paginated subset
+        let paginated_tools = all_tools
+            .clone()
+            .into_iter()
+            .skip(start_index)
+            .take(end_index - start_index)
+            .collect();
+
+        // Create next cursor if there are more tools
+        let next_cursor = if end_index < all_tools.len() {
+            Some(Cursor(end_index.to_string()))
+        } else {
+            None
+        };
+
+        (paginated_tools, next_cursor)
     }
 
     /// Execute a tool using CallToolParams and return a CallToolResult
     pub async fn execute_tool_with_params(
         &self,
-        params: CallToolParams,
+        params: CallToolParams
     ) -> Result<CallToolResult, Error> {
         let tools = self.tools.lock().await;
         let definition = tools
@@ -169,13 +205,7 @@ impl ToolRegistry {
                 // Call the handler function directly
                 handler(params.clone())
             }
-            ToolDefinition::External {
-                command,
-                args,
-                env,
-                annotations,
-                ..
-            } => {
+            ToolDefinition::External { command, args, env, annotations, .. } => {
                 // Prepare parameters as environment variables
                 let mut tool_env = env.clone();
                 if let Some(arguments) = &params.arguments {
@@ -186,23 +216,27 @@ impl ToolRegistry {
                     // Also pass parameters as JSON
                     tool_env.insert(
                         "TOOL_PARAMETERS".to_string(),
-                        serde_json::to_string(arguments)?,
+                        serde_json::to_string(arguments)?
                     );
                 }
 
                 // Convert args to &str array
-                let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+                let args_ref: Vec<&str> = args
+                    .iter()
+                    .map(|s| s.as_str())
+                    .collect();
 
                 // Execute the tool
                 let tool_id = format!("{}_{}", params.name, uuid::Uuid::new_v4());
-                let receiver = self
-                    .process_manager
-                    .spawn_process(&tool_id, &command, &args_ref, tool_env)
-                    .await?;
+                let receiver = self.process_manager.spawn_process(
+                    &tool_id,
+                    &command,
+                    &args_ref,
+                    tool_env
+                ).await?;
 
                 // Process the output with any provided annotations
-                self.process_tool_output(receiver, annotations.clone())
-                    .await
+                self.process_tool_output(receiver, annotations.clone()).await
             }
         }
     }
@@ -211,7 +245,7 @@ impl ToolRegistry {
     async fn process_tool_output(
         &self,
         mut receiver: mpsc::Receiver<ToolOutput>,
-        tool_annotations: Option<Annotations>,
+        tool_annotations: Option<Annotations>
     ) -> Result<CallToolResult, Error> {
         let mut stdout_content = String::new();
         let mut stderr_content = String::new();
@@ -246,49 +280,62 @@ impl ToolRegistry {
             match serde_json::from_str::<serde_json::Value>(&stdout_content) {
                 Ok(json_value) => {
                     // Try to convert JSON to Content
-                    if let Ok(content_value) = serde_json::from_value::<Content>(json_value.clone())
+                    if
+                        let Ok(content_value) = serde_json::from_value::<Content>(
+                            json_value.clone()
+                        )
                     {
                         // If it's already a valid Content type, use it
                         vec![content_value]
                     } else if json_value.is_object() && json_value.get("type").is_some() {
                         // If it has a "type" field but isn't a valid Content, wrap it as Text
-                        vec![Content::Text(TextContent {
-                            type_field: "text".to_string(),
-                            text: json_value.to_string(),
-                            annotations: Some(annotations.clone()),
-                        })]
+                        vec![
+                            Content::Text(TextContent {
+                                type_field: "text".to_string(),
+                                text: json_value.to_string(),
+                                annotations: Some(annotations.clone()),
+                            })
+                        ]
                     } else {
                         // For other JSON, convert it to a string and use as text
-                        vec![Content::Text(TextContent {
-                            type_field: "text".to_string(),
-                            text: json_value.to_string(),
-                            annotations: Some(annotations.clone()),
-                        })]
+                        vec![
+                            Content::Text(TextContent {
+                                type_field: "text".to_string(),
+                                text: json_value.to_string(),
+                                annotations: Some(annotations.clone()),
+                            })
+                        ]
                     }
                 }
                 Err(_) => {
                     // For non-JSON, use as plain text
-                    vec![Content::Text(TextContent {
-                        type_field: "text".to_string(),
-                        text: stdout_content,
-                        annotations: Some(annotations.clone()),
-                    })]
+                    vec![
+                        Content::Text(TextContent {
+                            type_field: "text".to_string(),
+                            text: stdout_content,
+                            annotations: Some(annotations.clone()),
+                        })
+                    ]
                 }
             }
         } else if !stderr_content.is_empty() {
             // Use stderr content as text
-            vec![Content::Text(TextContent {
-                type_field: "text".to_string(),
-                text: stderr_content,
-                annotations: Some(annotations),
-            })]
+            vec![
+                Content::Text(TextContent {
+                    type_field: "text".to_string(),
+                    text: stderr_content,
+                    annotations: Some(annotations),
+                })
+            ]
         } else {
             // Default empty content
-            vec![Content::Text(TextContent {
-                type_field: "text".to_string(),
-                text: String::new(),
-                annotations: None,
-            })]
+            vec![
+                Content::Text(TextContent {
+                    type_field: "text".to_string(),
+                    text: String::new(),
+                    annotations: None,
+                })
+            ]
         };
 
         Ok(CallToolResult {
@@ -301,7 +348,7 @@ impl ToolRegistry {
     pub async fn execute_tool(
         &self,
         tool_name: &str,
-        parameters: HashMap<String, serde_json::Value>,
+        parameters: HashMap<String, serde_json::Value>
     ) -> Result<CallToolResult, Error> {
         // Convert parameters to CallToolParams
         let params = CallToolParams {

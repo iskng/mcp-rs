@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use std::sync::Arc;
 
 use crate::protocol::Error;
-use crate::protocol::{CallToolRequest, CallToolResult, ListToolsRequest, ListToolsResult};
+use crate::protocol::{ CallToolRequest, CallToolResult, ListToolsRequest, ListToolsResult };
 use crate::server::services::ServiceProvider;
 use crate::server::transport::middleware::ClientSession;
 
@@ -18,14 +18,14 @@ pub trait ToolHandler: Send + Sync {
     async fn handle_list_tools(
         &self,
         request: &ListToolsRequest,
-        session: &ClientSession,
+        session: &ClientSession
     ) -> Result<ListToolsResult, Error>;
 
     /// Handle call tool request
     async fn handle_call_tool(
         &self,
         request: &CallToolRequest,
-        session: &ClientSession,
+        session: &ClientSession
     ) -> Result<CallToolResult, Error>;
 }
 
@@ -47,7 +47,7 @@ impl ToolHandler for DefaultToolHandler {
     async fn handle_list_tools(
         &self,
         request: &ListToolsRequest,
-        session: &ClientSession,
+        session: &ClientSession
     ) -> Result<ListToolsResult, Error> {
         // Log the request
         if let Some(id) = &session.client_id {
@@ -59,13 +59,19 @@ impl ToolHandler for DefaultToolHandler {
         // Get the tool registry from the service provider
         let tool_registry = self.service_provider.tool_registry();
 
-        // Fetch the list of tools
-        let tools = tool_registry.list_tools().await;
+        // Extract pagination parameters
+        let cursor = request.params.as_ref().and_then(|p| p.cursor.as_ref());
+
+        // Use a reasonable default limit
+        let limit = Some(50);
+
+        // Fetch the list of tools with pagination
+        let (tools, next_cursor) = tool_registry.list_tools(cursor, limit).await;
 
         // Return the result
         Ok(ListToolsResult {
             tools,
-            next_cursor: None,
+            next_cursor,
             _meta: None,
         })
     }
@@ -73,7 +79,7 @@ impl ToolHandler for DefaultToolHandler {
     async fn handle_call_tool(
         &self,
         request: &CallToolRequest,
-        session: &ClientSession,
+        session: &ClientSession
     ) -> Result<CallToolResult, Error> {
         // Extract tool call parameters
         let params = request.params.clone();

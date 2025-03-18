@@ -6,14 +6,14 @@
 
 use std::sync::Arc;
 
-use crate::protocol::{JSONRPCMessage, errors::Error};
+use crate::protocol::{ JSONRPCMessage, errors::Error };
 use crate::server::handlers::RouteHandler;
 use crate::server::server::AppState;
-use crate::server::transport::{DirectIOTransport, Transport};
+use crate::server::transport::{ DirectIOTransport, Transport };
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::process::Stdio;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+use tokio::io::{ AsyncBufReadExt, AsyncWriteExt };
 use tokio::process;
 use tokio::sync::mpsc;
 use tracing;
@@ -108,12 +108,10 @@ impl StdioTransport {
             .map_err(|e| Error::Transport(format!("Failed to spawn process: {}", e)))?;
 
         // Get stdio handles
-        let stdin = child
-            .stdin
+        let stdin = child.stdin
             .take()
             .ok_or_else(|| Error::Transport("Failed to get stdin handle".to_string()))?;
-        let stdout = child
-            .stdout
+        let stdout = child.stdout
             .take()
             .ok_or_else(|| Error::Transport("Failed to get stdout handle".to_string()))?;
 
@@ -144,8 +142,7 @@ impl StdioTransport {
 
     /// Register a message handler
     pub fn register_message_handler<H>(&mut self, handler: H)
-    where
-        H: RouteHandler + Send + Sync + 'static,
+        where H: RouteHandler + Send + Sync + 'static
     {
         self.set_message_handler(Arc::new(handler));
     }
@@ -159,7 +156,7 @@ impl StdioTransport {
 /// Process stdout from a child process and forward messages
 async fn stdio_reader(
     stdout: process::ChildStdout,
-    tx: mpsc::Sender<Result<JSONRPCMessage, Error>>,
+    tx: mpsc::Sender<Result<JSONRPCMessage, Error>>
 ) -> () {
     let mut reader = tokio::io::BufReader::new(stdout);
     let mut line = String::new();
@@ -193,7 +190,7 @@ async fn stdio_reader(
 /// Process outgoing messages and write to stdin
 async fn stdio_writer(
     mut stdin: process::ChildStdin,
-    mut rx: mpsc::Receiver<JSONRPCMessage>,
+    mut rx: mpsc::Receiver<JSONRPCMessage>
 ) -> () {
     while let Some(message) = rx.recv().await {
         match serde_json::to_string(&message) {
@@ -256,10 +253,11 @@ impl Transport for StdioTransport {
             if let Err(e) = process.kill().await {
                 tracing::warn!("Failed to kill process: {}", e);
                 // If we can't kill it, at least don't wait for it
-                return Err(Error::Io(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    "Failed to kill process",
-                )));
+                return Err(
+                    Error::Io(
+                        std::io::Error::new(std::io::ErrorKind::Other, "Failed to kill process")
+                    )
+                );
             }
         }
 
@@ -293,7 +291,8 @@ impl DirectIOTransport for StdioTransport {
                 }
                 Ok(_) => {
                     // Parse the JSON message
-                    serde_json::from_str(&line)
+                    serde_json
+                        ::from_str(&line)
                         .map_err(Error::Json)
                         .map(|msg| (None, msg)) // StdioTransport has no client ID concept
                 }
@@ -311,9 +310,7 @@ impl DirectIOTransport for StdioTransport {
                 }
             }
         } else {
-            Err(Error::Transport(
-                "Transport is not properly initialized".to_string(),
-            ))
+            Err(Error::Transport("Transport is not properly initialized".to_string()))
         }
     }
 
@@ -327,10 +324,8 @@ impl DirectIOTransport for StdioTransport {
 
         if let Some(channels) = &mut self.channels {
             // Send through process channels
-            channels
-                .outgoing_tx
-                .send(message.clone())
-                .await
+            channels.outgoing_tx
+                .send(message.clone()).await
                 .map_err(|_| Error::Transport("Failed to send message".to_string()))?;
         } else if let Some(stdout) = &mut self.stdout {
             // Write directly to stdout using tokio async operations
@@ -338,18 +333,11 @@ impl DirectIOTransport for StdioTransport {
             stdout.write_all(b"\n").await.map_err(Error::Io)?;
             stdout.flush().await.map_err(Error::Io)?;
         } else {
-            return Err(Error::Transport(
-                "Transport is not properly initialized".to_string(),
-            ));
+            return Err(Error::Transport("Transport is not properly initialized".to_string()));
         }
 
         Ok(())
     }
-}
-
-/// Adapter to convert a RouteHandler to a TransportMessageHandler
-struct RouteHandlerAdapter {
-    server_handler: Arc<dyn RouteHandler + Send + Sync>,
 }
 
 impl Default for StdioTransport {

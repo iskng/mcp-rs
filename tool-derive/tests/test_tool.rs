@@ -1,6 +1,6 @@
 use mcp_rs::protocol::Tool;
 use mcp_rs::protocol::tools::ToToolSchema;
-use serde::{Deserialize, Serialize};
+use serde::{ Deserialize, Serialize };
 use tool_derive::Tool;
 
 // Define an operation enum
@@ -59,11 +59,7 @@ pub struct WeatherConverter {
     #[param(description = "Temperature value", required = true)]
     temperature: f64,
 
-    #[param(
-        description = "Temperature unit",
-        required = true,
-        enum_values = "celsius,fahrenheit"
-    )]
+    #[param(description = "Temperature unit", required = true, enum_values = "celsius,fahrenheit")]
     unit: TemperatureUnit,
 }
 
@@ -84,11 +80,7 @@ pub struct FormatCalculator {
     )]
     operation: Operation,
 
-    #[param(
-        description = "Output format",
-        required = true,
-        enum_values = "json,text,html"
-    )]
+    #[param(description = "Output format", required = true, enum_values = "json,text,html")]
     format: Format,
 }
 
@@ -134,11 +126,12 @@ mod tests {
             a_param.get("description").and_then(|v| v.as_str()),
             Some("First operand")
         );
-        assert_eq!(a_param.get("type").and_then(|v| v.as_str()), Some("number"));
+        assert_eq!(
+            a_param.get("type").and_then(|v| v.as_str()),
+            Some("number")
+        );
 
-        let op_param = properties
-            .get("operation")
-            .expect("Should have 'operation' parameter");
+        let op_param = properties.get("operation").expect("Should have 'operation' parameter");
         assert_eq!(
             op_param.get("description").and_then(|v| v.as_str()),
             Some("Operation to perform")
@@ -154,10 +147,10 @@ mod tests {
             .as_array()
             .expect("enum should be an array");
         assert_eq!(enum_values.len(), 4);
-        assert!(enum_values.iter().any(|v| v.as_str() == Some("add")));
-        assert!(enum_values.iter().any(|v| v.as_str() == Some("subtract")));
-        assert!(enum_values.iter().any(|v| v.as_str() == Some("multiply")));
-        assert!(enum_values.iter().any(|v| v.as_str() == Some("divide")));
+        assert!(enum_values.iter().any(|v| v.as_str() == Some("Add")));
+        assert!(enum_values.iter().any(|v| v.as_str() == Some("Subtract")));
+        assert!(enum_values.iter().any(|v| v.as_str() == Some("Multiply")));
+        assert!(enum_values.iter().any(|v| v.as_str() == Some("Divide")));
 
         let required = input_schema.required.expect("Should have required fields");
         assert_eq!(required.len(), 3);
@@ -177,19 +170,14 @@ mod tests {
         let tool = converter.to_tool_schema();
 
         assert_eq!(tool.name, "WeatherConverter");
-        assert_eq!(
-            tool.description.unwrap(),
-            "Converts temperature between units"
-        );
+        assert_eq!(tool.description.unwrap(), "Converts temperature between units");
 
         let input_schema = tool.input_schema;
 
         let properties = input_schema.properties.expect("Should have properties");
         assert_eq!(properties.len(), 2);
 
-        let unit_param = properties
-            .get("unit")
-            .expect("Should have 'unit' parameter");
+        let unit_param = properties.get("unit").expect("Should have 'unit' parameter");
         assert_eq!(
             unit_param.get("description").and_then(|v| v.as_str()),
             Some("Temperature unit")

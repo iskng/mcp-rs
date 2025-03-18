@@ -2,10 +2,15 @@ use axum::http::Request;
 use futures::future::BoxFuture;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::task::{Context, Poll};
-use tokio::sync::{Mutex, mpsc};
-use tower::{Layer, Service};
+use std::task::{ Context, Poll };
+use tokio::sync::{ Mutex, mpsc };
+use tower::{ Layer, Service };
 use uuid::Uuid;
+
+/// Helper function to try to convert a serializable object to a JSON Value
+fn try_serialize_to_value<T: serde::Serialize>(obj: &T) -> Option<serde_json::Value> {
+    serde_json::to_value(obj).ok()
+}
 
 /// Represents a client session with its message channel
 #[derive(Debug, Clone)]
@@ -59,9 +64,27 @@ impl ClientSession {
         }
     }
 
-    //TODO: We should validate before sending
     /// Send a JSON-serializable message to this client
     pub async fn send_json<T: serde::Serialize>(&self, message: &T) -> Result<(), String> {
+        // If this is a JSONRPCMessage, validate it before sending
+        if let Some(json_str) = try_serialize_to_value(message) {
+            if
+                let Ok(jsonrpc_message) =
+                    serde_json::from_value::<crate::protocol::JSONRPCMessage>(json_str)
+            {
+                // Validate the message before sending
+                let config = crate::protocol::validation::ValidationConfig::default();
+                if
+                    let Err(e) = crate::protocol::validation::validate_message(
+                        &jsonrpc_message,
+                        &config
+                    )
+                {
+                    return Err(format!("Message validation failed: {}", e));
+                }
+            }
+        }
+
         let json = serde_json::to_string(message).map_err(|e| e.to_string())?;
         self.send_message(json).await
     }
@@ -70,7 +93,7 @@ impl ClientSession {
     pub async fn set_value<T: serde::Serialize>(
         &self,
         key: &str,
-        value: T,
+        value: T
     ) -> Result<(), serde_json::Error> {
         let value_json = serde_json::to_value(value)?;
         let mut data = self.data.lock().await;
@@ -81,8 +104,7 @@ impl ClientSession {
     /// Retrieve a value from the session
     pub async fn get_value<T: serde::de::DeserializeOwned>(&self, key: &str) -> Option<T> {
         let data = self.data.lock().await;
-        data.get(key)
-            .and_then(|value| serde_json::from_value(value.clone()).ok())
+        data.get(key).and_then(|value| serde_json::from_value(value.clone()).ok())
     }
 }
 
@@ -195,11 +217,12 @@ pub struct SessionMiddleware<S> {
     store: Arc<ClientSessionStore>,
 }
 
-impl<S, ReqBody> Service<Request<ReqBody>> for SessionMiddleware<S>
-where
-    S: Service<Request<ReqBody>, Response = axum::response::Response> + Clone + Send + 'static,
-    S::Future: Send + 'static,
-    ReqBody: Send + 'static,
+impl<S, ReqBody> Service<Request<ReqBody>>
+    for SessionMiddleware<S>
+    where
+        S: Service<Request<ReqBody>, Response = axum::response::Response> + Clone + Send + 'static,
+        S::Future: Send + 'static,
+        ReqBody: Send + 'static
 {
     type Response = S::Response;
     type Error = S::Error;
@@ -219,12 +242,16 @@ where
             tracing::debug!("Session middleware processing request to: {}", req.uri());
 
             // Extract session_id from query parameters
-            let session_id = req.uri().query().and_then(|q| {
-                tracing::trace!("Parsing query parameters: {}", q);
-                url::form_urlencoded::parse(q.as_bytes())
-                    .find(|(key, _)| key == "session_id")
-                    .map(|(_, value)| value.to_string())
-            });
+            let session_id = req
+                .uri()
+                .query()
+                .and_then(|q| {
+                    tracing::trace!("Parsing query parameters: {}", q);
+                    url::form_urlencoded
+                        ::parse(q.as_bytes())
+                        .find(|(key, _)| key == "session_id")
+                        .map(|(_, value)| value.to_string())
+                });
 
             tracing::debug!(
                 "Session middleware: processing request with session_id: {:?}",

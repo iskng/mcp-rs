@@ -73,7 +73,7 @@ impl CompositeServerHandler {
     /// Create a new composite server handler with default handlers
     pub fn new(service_provider: Arc<ServiceProvider>) -> Self {
         let initialize_handler = Box::new(DefaultInitializeHandler::new(service_provider.clone()));
-        let handshake_handler = Box::new(DefaultHandshakeHandler::new(service_provider.clone()));
+        let handshake_handler = Box::new(DefaultHandshakeHandler::new());
         let tool_handler = Box::new(DefaultToolHandler::new(service_provider.clone()));
         let resource_handler = Box::new(DefaultResourceHandler::new(service_provider.clone()));
         let prompt_handler = Box::new(PromptsHandler::new(service_provider.clone()));
@@ -93,7 +93,7 @@ impl CompositeServerHandler {
         service_provider: Arc<ServiceProvider>,
         initialize_handler: Box<dyn InitializeHandler>
     ) -> Self {
-        let handshake_handler = Box::new(DefaultHandshakeHandler::new(service_provider.clone()));
+        let handshake_handler = Box::new(DefaultHandshakeHandler::new());
         let tool_handler = Box::new(DefaultToolHandler::new(service_provider.clone()));
         let resource_handler = Box::new(DefaultResourceHandler::new(service_provider.clone()));
         let prompt_handler = Box::new(PromptsHandler::new(service_provider.clone()));

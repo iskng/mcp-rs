@@ -8,7 +8,8 @@ use std::sync::Arc;
 use tracing::info;
 
 use crate::protocol::Error;
-use crate::protocol::{JSONRPCMessage, Message, RequestId};
+use crate::protocol::{ JSONRPCMessage, Message, RequestId };
+use crate::protocol::validation::{ validate_message, ValidationConfig };
 use crate::server::services::ServiceProvider;
 use crate::server::transport::middleware::ClientSession;
 
@@ -22,7 +23,7 @@ pub trait RouteHandler: Send + Sync {
     async fn handle_message(
         &self,
         message: JSONRPCMessage,
-        session: &ClientSession,
+        session: &ClientSession
     ) -> Result<Option<JSONRPCMessage>, Error> {
         // Extract client ID from session
         let client_id = session.client_id.as_deref();
@@ -32,6 +33,22 @@ pub trait RouteHandler: Send + Sync {
             tracing::debug!("Processing message from client {}: {:?}", id, &message);
         } else {
             tracing::debug!("Processing message from anonymous client: {:?}", &message);
+        }
+
+        // Validate the message
+        let config = ValidationConfig::default();
+        if let Err(e) = validate_message(&message, &config) {
+            tracing::error!("Message validation failed: {}", e);
+
+            // Extract the request ID before moving the message
+            let request_id = message
+                .id()
+                .cloned()
+                .unwrap_or_else(|| RequestId::Number(0));
+
+            // Create error response with the preserved ID
+            let response = crate::protocol::to_error_message(request_id, &e);
+            return Ok(Some(response));
         }
 
         // Extract the request ID before moving the message
@@ -46,10 +63,7 @@ pub trait RouteHandler: Send + Sync {
             Ok(typed_message) => {
                 tracing::debug!("Converted to typed message: {:?}", typed_message);
                 // Process the typed message
-                match self
-                    .handle_typed_message(request_id, client_id, &typed_message)
-                    .await
-                {
+                match self.handle_typed_message(request_id, client_id, &typed_message).await {
                     Ok(response) => {
                         tracing::debug!("Got response from handler: {:?}", response);
                         Ok(response)
@@ -84,7 +98,7 @@ pub trait RouteHandler: Send + Sync {
         &self,
         request_id: RequestId,
         client_id: Option<&str>,
-        message: &Message,
+        message: &Message
     ) -> Result<Option<JSONRPCMessage>, Error>;
 
     /// Get a reference to the service provider, if supported by this handler
