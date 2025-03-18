@@ -352,6 +352,13 @@ impl Client {
         message: JSONRPCMessage,
         service_provider: &Arc<ServiceProvider>
     ) -> Result<(), Error> {
+        // Validate the message
+        let config = crate::protocol::validation::ValidationConfig::default();
+        if let Err(e) = crate::protocol::validation::validate_message(&message, &config) {
+            warn!("Message validation failed: {}", e);
+            return Err(e);
+        }
+
         match message {
             JSONRPCMessage::Response(response) => {
                 debug!("Received response: {:?}", response.id);
@@ -650,6 +657,13 @@ impl Client {
         if !self.is_connected() {
             error!("Cannot send message - client not connected to server");
             return Err(Error::Transport("Not connected to server".to_string()));
+        }
+
+        // Validate the message before sending
+        let config = crate::protocol::validation::ValidationConfig::default();
+        if let Err(e) = crate::protocol::validation::validate_message(&message, &config) {
+            error!("Message validation failed: {}", e);
+            return Err(e);
         }
 
         // Directly send the message without locking

@@ -18,7 +18,6 @@ use crate::client::handlers::{
     tools::ToolHandler,
 };
 use crate::client::services::ServiceProvider;
-use crate::client::services::subscription::Subscription;
 use crate::client::services::lifecycle::LifecycleState;
 use crate::protocol::{
     CallToolParams,
@@ -33,7 +32,6 @@ use crate::protocol::{
     ListToolsResult,
     Method,
 };
-use crate::client::model::ServerInfo;
 
 /// Client handler that combines multiple specialized handlers
 pub struct CompositeClientHandler {

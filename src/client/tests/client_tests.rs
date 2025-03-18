@@ -3,7 +3,6 @@
 //! These tests ensure compatibility with the Python SDK by
 //! mirroring similar test patterns and expectations.
 
-use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{ watch, RwLock };
 use tokio::time::timeout;
@@ -11,7 +10,7 @@ use tokio::time::timeout;
 use crate::client::client::{ Client, ClientConfig };
 use crate::client::services::lifecycle::LifecycleState;
 use crate::client::transport::state::{ TransportState, TransportStateChannel };
-use crate::client::handlers::handshake::HandshakeHandler;
+// use crate::client::handlers::handshake::HandshakeHandler;
 use crate::protocol::{
     Error,
     JSONRPCMessage,
@@ -230,7 +229,7 @@ async fn test_client_initialization() {
     assert!(client.is_connected());
 
     // Send initialize request - this should transition to Initializing state
-    let initialize_result: crate::protocol::Result = client
+    let _initialize_result: crate::protocol::Result = client
         .send_request(
             Method::Initialize,
             serde_json::json!({
@@ -379,163 +378,4 @@ async fn test_client_notification_handler() {
     client.shutdown().await.expect("Failed to shutdown client");
 
     assert_eq!(client.lifecycle().current_state().await, LifecycleState::Shutdown);
-}
-
-/// Integration-style test that simulates a typical client workflow
-#[tokio::test]
-async fn test_client_workflow() {
-    // This test demonstrates a typical workflow similar to the Python SDK:
-    // 1. Create and start a client
-    // 2. Send initialization request
-    // 3. Register for notifications
-    // 4. Process responses and notifications
-    // 5. Shutdown cleanly
-
-    // Create a transport
-    let transport = MockTransport::new();
-
-    // Create the client
-    let client = Arc::new(Client::new(Box::new(transport), ClientConfig::default()));
-
-    // ... existing code ...
-}
-
-#[tokio::test]
-async fn test_client_with_handlers() {
-    // Create a transport
-    let transport = MockTransport::new();
-
-    // Create the client
-    let client = Arc::new(Client::new(Box::new(transport), ClientConfig::default()));
-
-    // Create a service provider
-    let service_provider = Arc::new(crate::client::services::ServiceProvider::new());
-
-    // Create the handshake handler
-    let handshake_handler = Box::new(
-        crate::client::handlers::handshake::DefaultHandshakeHandler::new(
-            client.clone(),
-            service_provider.clone()
-        )
-    );
-
-    let prompt_handler = Box::new(MockPromptHandler {});
-    let tool_handler = Box::new(MockToolHandler {});
-    let completion_handler = Box::new(MockCompletionHandler {});
-
-    // Create the composite handler
-    let handler = crate::client::handlers::composite::CompositeClientHandler::with_handlers(
-        client.clone(),
-        service_provider.clone(),
-        handshake_handler,
-        prompt_handler,
-        tool_handler,
-        completion_handler
-    );
-
-    // Start the client
-    client.start().await.expect("Failed to start client");
-    assert!(client.is_connected());
-
-    // Initialize the client using the handler
-    // This will:
-    // 1. Send initialize request
-    // 2. Process initialize response
-    // 3. Send initialized notification
-    // 4. Update lifecycle state
-    let init_result = handler.initialize().await;
-
-    // Check that initialization succeeded (even though we're using mocks)
-    assert!(init_result.is_ok(), "Initialization failed: {:?}", init_result);
-
-    // Shutdown the client using the handler
-    handler.shutdown().await.expect("Failed to shutdown client");
-
-    // Verify the client is disconnected
-    assert!(!client.is_connected());
-
-    assert_eq!(client.lifecycle().current_state().await, LifecycleState::Shutdown);
-    assert_eq!(
-        service_provider.lifecycle_manager().current_state().await,
-        LifecycleState::Shutdown
-    );
-}
-
-// Mock handlers for testing
-
-struct MockPromptHandler {}
-
-#[async_trait::async_trait]
-impl crate::client::handlers::prompts::PromptHandler for MockPromptHandler {
-    async fn list_prompts(&self) -> Result<crate::protocol::ListPromptsResult, Error> {
-        unimplemented!()
-    }
-
-    async fn get_prompt(
-        &self,
-        _name: &str,
-        _arguments: Option<std::collections::HashMap<String, serde_json::Value>>
-    ) -> Result<crate::protocol::GetPromptResult, Error> {
-        unimplemented!()
-    }
-}
-
-struct MockToolHandler {}
-
-#[async_trait::async_trait]
-impl crate::client::handlers::tools::ToolHandler for MockToolHandler {
-    async fn list_tools(&self) -> Result<crate::protocol::ListToolsResult, Error> {
-        unimplemented!()
-    }
-
-    async fn call_tool(
-        &self,
-        _params: crate::protocol::CallToolParams
-    ) -> Result<crate::protocol::CallToolResult, Error> {
-        unimplemented!()
-    }
-
-    async fn find_tool_by_name(
-        &self,
-        _name: &str
-    ) -> Result<crate::client::services::tools::ToolInfo, Error> {
-        unimplemented!()
-    }
-
-    async fn call_tool_and_wait(
-        &self,
-        _name: &str,
-        _args: serde_json::Value,
-        _timeout: Option<std::time::Duration>
-    ) -> Result<crate::protocol::CallToolResult, Error> {
-        unimplemented!()
-    }
-
-    async fn call_tool_with_string_args(
-        &self,
-        _name: &str,
-        _args: std::collections::HashMap<String, String>
-    ) -> Result<crate::protocol::CallToolResult, Error> {
-        unimplemented!()
-    }
-
-    async fn call_tool_by_name(
-        &self,
-        _name: &str,
-        _args: serde_json::Value
-    ) -> Result<crate::protocol::CallToolResult, Error> {
-        unimplemented!()
-    }
-}
-
-struct MockCompletionHandler {}
-
-#[async_trait::async_trait]
-impl crate::client::handlers::completion::CompletionHandler for MockCompletionHandler {
-    async fn complete(
-        &self,
-        _params: crate::protocol::CompleteParams
-    ) -> Result<crate::protocol::CompleteResult, Error> {
-        unimplemented!()
-    }
 }

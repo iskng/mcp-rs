@@ -43,6 +43,7 @@ enum SseEventType {
     Message(String),
 
     /// Error message received
+    #[allow(dead_code)]
     Error(String),
 
     /// Keep-alive message

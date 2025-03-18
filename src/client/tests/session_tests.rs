@@ -9,7 +9,6 @@ use tokio::sync::{ watch, RwLock };
 
 use crate::client::clientsession::ClientSession;
 use crate::client::services::notification::NotificationRouter;
-use crate::client::transport::Transport;
 use crate::client::transport::state::{ TransportState, TransportStateChannel };
 use crate::protocol::{
     Error,
