@@ -11,6 +11,8 @@ This repository contains a working implementation of the MCP protocol with the f
 - **Calculator Tool**: A sample tool that performs arithmetic operations (add, subtract, multiply, divide)
 - **Server-Sent Events (SSE) Transport**: Real-time communication between client and server
 - **WebSocket Transport**: Alternative transport for bidirectional communication
+- **Tool Derive Macro**: A macro for easily creating tools from Rust structs
+- **Prompt Management**: Support for creating and managing prompt templates
 
 The `server_test` example is fully functional and works as a Cursor tool, allowing you to run an MCP server and interact with it using the Python client.
 
@@ -22,6 +24,8 @@ The `server_test` example is fully functional and works as a Cursor tool, allowi
 - **Schema Validation**: Automatic JSON Schema generation for protocol types
 - **Extensible**: Easy to add new message handlers, tools, resources, and prompts
 - **Python Compatibility**: Works with the standard MCP Python library
+- **Derive Macros**: Generate tool schemas automatically from Rust structs
+- **Prompt Templates**: Create and manage reusable prompt templates
 
 ## Quick Start
 
@@ -68,8 +72,6 @@ async fn main() {
             .add_parameter(/* ... */)
             // ... add more parameters
             .return_type("number")
-            .streaming(false)
-            .cancellable(false)
             .timeout(30)
     );
     
@@ -84,10 +86,75 @@ async fn main() {
 }
 ```
 
+### Using the Tool Derive Macro
+
+The library provides a convenient derive macro to create tools from Rust structs:
+
+```rust
+use tool_derive::Tool;
+use serde::{Serialize, Deserialize};
+
+#[derive(Tool, Debug, Clone, Serialize, Deserialize)]
+#[tool(description = "Performs basic arithmetic")]
+pub struct Calculator {
+    #[param(description = "First operand", required = true)]
+    pub a: f64,
+
+    #[param(description = "Second operand", required = true)]
+    pub b: f64,
+
+    #[param(
+        description = "Operation to perform",
+        required = true,
+        enum_values = "Add,Subtract,Multiply,Divide"
+    )]
+    pub operation: Operation,
+}
+
+// Register the tool using the derived to_tool_schema() method
+server.register_in_process_tool(
+    calculator.to_tool_schema(),
+    |params| {
+        // Handle the tool call with type-safe parameters
+    }
+)
+```
+
+### Working with Prompts
+
+The library includes a prompt management system for creating reusable prompt templates:
+
+```rust
+// Using the prompt macro to create a prompt template
+server.register_prompt(
+    prompt!(
+        "welcome",
+        "A welcome message for users",
+        vec![PromptArgument {
+            name: "name".to_string(),
+            description: Some("The name of the user".to_string()),
+            required: false,
+        }],
+        |arguments: Option<HashMap<String, Value>>| async move {
+            let name = match &arguments {
+                Some(args) => args.get("name").and_then(|v| v.as_str()).unwrap_or("friend"),
+                None => "friend",
+            };
+
+            Ok(vec![
+                create_user_text_message("Hello!"),
+                create_assistant_text_message(&format!("Welcome, {}!", name))
+            ])
+        }
+    )
+)
+```
+
 ## Examples
 
 The repository includes several examples to demonstrate different MCP features:
 
+- **calculator.rs**: Demonstrates the Tool derive macro and prompt management system
 - **server_test**: A complete MCP server with a calculator tool and SSE transport
 - **lifecycle_example**: Demonstrates the lifecycle management features
 - **websocket_transport_example**: Shows how to use WebSocket transport
@@ -97,7 +164,7 @@ The repository includes several examples to demonstrate different MCP features:
 To run an example:
 
 ```bash
-cargo run --example server_test
+cargo run --example calculator
 ```
 
 ## Python Client
